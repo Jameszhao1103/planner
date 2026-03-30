@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Itinerary Workspace Wireframe</title>
+    <style>
+      :root {
+        --bg: #f4efe6;
+        --panel: rgba(255, 252, 247, 0.9);
+        --ink: #1f2d2a;
+        --muted: #687974;
+        --line: #d3c8b7;
+        --accent: #145a4a;
+        --travel: #2d6cdf;
+        --activity: #cb5a3f;
+        --meal: #d28325;
+        --stay: #8b4db3;
+        --buffer: #9099a4;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: Georgia, "Times New Roman", serif;
+        background:
+          radial-gradient(circle at top left, rgba(20, 90, 74, 0.14), transparent 28%),
+          radial-gradient(circle at bottom right, rgba(210, 131, 37, 0.12), transparent 24%),
+          var(--bg);
+        color: var(--ink);
+      }
+
+      .shell {
+        max-width: 1480px;
+        margin: 0 auto;
+        padding: 28px;
+      }
+
+      .header {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        align-items: end;
+        margin-bottom: 20px;
+      }
+
+      .title h1 {
+        margin: 0;
+        font-size: 34px;
+        letter-spacing: 0.02em;
+      }
+
+      .title p,
+      .meta,
+      .pill,
+      .legend {
+        color: var(--muted);
+      }
+
+      .title p {
+        margin: 8px 0 0;
+      }
+
+      .meta {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .pill {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 8px 14px;
+        background: rgba(255, 255, 255, 0.52);
+        font-size: 14px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1.35fr 1fr;
+        grid-template-rows: minmax(340px, 44vh) minmax(280px, auto);
+        gap: 16px;
+      }
+
+      .panel {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: 22px;
+        padding: 18px;
+        box-shadow: 0 12px 36px rgba(61, 54, 40, 0.06);
+        backdrop-filter: blur(12px);
+      }
+
+      .panel h2 {
+        margin: 0 0 12px;
+        font-size: 16px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }
+
+      .map {
+        position: relative;
+        overflow: hidden;
+      }
+
+      .map-canvas {
+        position: relative;
+        height: calc(100% - 34px);
+        border-radius: 18px;
+        background:
+          linear-gradient(130deg, rgba(20, 90, 74, 0.08), rgba(20, 90, 74, 0.02)),
+          repeating-linear-gradient(
+            0deg,
+            rgba(31, 45, 42, 0.05),
+            rgba(31, 45, 42, 0.05) 1px,
+            transparent 1px,
+            transparent 38px
+          ),
+          repeating-linear-gradient(
+            90deg,
+            rgba(31, 45, 42, 0.05),
+            rgba(31, 45, 42, 0.05) 1px,
+            transparent 1px,
+            transparent 38px
+          );
+      }
+
+      .route {
+        position: absolute;
+        border-radius: 999px;
+        transform-origin: left center;
+        opacity: 0.86;
+      }
+
+      .drive {
+        height: 5px;
+        background: var(--travel);
+      }
+
+      .walk {
+        height: 4px;
+        border-top: 4px dashed var(--travel);
+      }
+
+      .marker {
+        position: absolute;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        border: 3px solid #fff;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
+      }
+
+      .airport,
+      .flight-tag {
+        background: #245fce;
+      }
+
+      .hotel,
+      .lodging-tag {
+        background: var(--stay);
+      }
+
+      .restaurant,
+      .meal-tag {
+        background: var(--meal);
+      }
+
+      .sight,
+      .activity-tag {
+        background: #2d8c54;
+      }
+
+      .tag-row,
+      .legend-row,
+      .quick-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .legend-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.55);
+        border: 1px solid rgba(211, 200, 183, 0.75);
+        font-size: 13px;
+      }
+
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+      }
+
+      .timeline .day-tabs {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+
+      .day-tab {
+        padding: 8px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.56);
+        font-size: 14px;
+      }
+
+      .day-tab.active {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+      }
+
+      .schedule {
+        display: grid;
+        grid-template-columns: 68px 1fr;
+        gap: 10px 12px;
+      }
+
+      .time {
+        color: var(--muted);
+        font-size: 13px;
+        padding-top: 10px;
+      }
+
+      .block {
+        border-left: 5px solid transparent;
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.62);
+      }
+
+      .block small {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+      }
+
+      .travel-block {
+        border-color: var(--travel);
+      }
+
+      .activity-block {
+        border-color: var(--activity);
+      }
+
+      .meal-block {
+        border-color: var(--meal);
+      }
+
+      .stay-block {
+        border-color: var(--stay);
+      }
+
+      .buffer-block {
+        border-color: var(--buffer);
+      }
+
+      .warning {
+        display: inline-flex;
+        margin-top: 8px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+        background: rgba(210, 131, 37, 0.16);
+        color: #7a4e09;
+      }
+
+      .markdown pre,
+      .assistant .chat,
+      .assistant .diff {
+        margin: 0;
+        border-radius: 16px;
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.66);
+        border: 1px solid rgba(211, 200, 183, 0.7);
+      }
+
+      .markdown pre {
+        height: calc(100% - 36px);
+        overflow: auto;
+        line-height: 1.65;
+        white-space: pre-wrap;
+      }
+
+      .assistant {
+        display: grid;
+        grid-template-rows: auto auto 1fr;
+        gap: 12px;
+      }
+
+      .assistant .chat {
+        font-size: 15px;
+        line-height: 1.55;
+      }
+
+      .assistant .diff {
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .action {
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.56);
+        font-size: 13px;
+      }
+
+      @media (max-width: 980px) {
+        .header {
+          flex-direction: column;
+          align-items: start;
+        }
+
+        .grid {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto;
+        }
+
+        .map-canvas {
+          min-height: 300px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="header">
+        <div class="title">
+          <h1>Asheville Long Weekend</h1>
+          <p>Interactive itinerary workspace with shared state across map, timeline, markdown, and assistant.</p>
+        </div>
+        <div class="meta">
+          <span class="pill">Apr 12 to Apr 14</span>
+          <span class="pill">3 travelers</span>
+          <span class="pill">4 locked items</span>
+          <span class="pill">1 warning</span>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="panel map">
+          <h2>Map</h2>
+          <div class="map-canvas">
+            <div class="route drive" style="left: 14%; top: 70%; width: 33%; transform: rotate(-24deg);"></div>
+            <div class="route drive" style="left: 46%; top: 56%; width: 14%; transform: rotate(88deg);"></div>
+            <div class="route walk" style="left: 58%; top: 68%; width: 11%; transform: rotate(12deg);"></div>
+            <div class="route drive" style="left: 68%; top: 70%; width: 18%; transform: rotate(-42deg);"></div>
+
+            <div class="marker airport" style="left: 12%; top: 72%;"></div>
+            <div class="marker hotel" style="left: 46%; top: 52%;"></div>
+            <div class="marker restaurant" style="left: 57%; top: 67%;"></div>
+            <div class="marker sight" style="left: 68%; top: 69%;"></div>
+            <div class="marker restaurant" style="left: 86%; top: 56%;"></div>
+          </div>
+          <div class="legend-row" style="margin-top: 12px;">
+            <span class="legend-chip"><span class="dot airport"></span>Airport</span>
+            <span class="legend-chip"><span class="dot hotel"></span>Hotel</span>
+            <span class="legend-chip"><span class="dot restaurant"></span>Meal</span>
+            <span class="legend-chip"><span class="dot sight"></span>Activity</span>
+            <span class="legend-chip">Solid: drive</span>
+            <span class="legend-chip">Dashed: walk</span>
+          </div>
+        </article>
+
+        <article class="panel markdown">
+          <h2>Markdown Plan</h2>
+          <pre>## Day 1
+
+- 10:45 arrive at AVL and clear baggage claim.
+- 11:45 check in at The Foundry Hotel.
+- 12:30 lunch at White Duck Taco Shop.
+- 14:00 walk the River Arts District.
+- 18:30 dinner at Cúrate.
+- Warning: dinner overlaps with closing time.
+
+## Day 2
+
+- 09:30 drive to Biltmore Estate.
+- 10:00 to 13:00 estate visit.
+- 13:20 lunch near the gardens.
+- 15:00 downtown coffee and free time.</pre>
+        </article>
+
+        <article class="panel timeline">
+          <h2>Timeline</h2>
+          <div class="day-tabs">
+            <span class="day-tab active">Day 1</span>
+            <span class="day-tab">Day 2</span>
+            <span class="day-tab">Day 3</span>
+          </div>
+          <div class="schedule">
+            <div class="time">10:45</div>
+            <div class="block travel-block">
+              Arrive at AVL
+              <small>Flight anchor, locked</small>
+            </div>
+
+            <div class="time">11:15</div>
+            <div class="block buffer-block">
+              Arrival buffer
+              <small>Baggage claim and car pickup</small>
+            </div>
+
+            <div class="time">11:45</div>
+            <div class="block stay-block">
+              Check in at The Foundry Hotel
+              <small>30 min drive from airport</small>
+            </div>
+
+            <div class="time">12:30</div>
+            <div class="block meal-block">
+              Lunch at White Duck Taco Shop
+              <small>15 min drive from hotel</small>
+            </div>
+
+            <div class="time">14:00</div>
+            <div class="block activity-block">
+              River Arts District walk
+              <small>2 hr activity window</small>
+            </div>
+
+            <div class="time">18:30</div>
+            <div class="block meal-block">
+              Dinner at Cúrate
+              <small>Restaurant closes at 19:30</small>
+              <span class="warning">Ends after close</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel assistant">
+          <h2>Assistant</h2>
+          <div class="chat">
+            Replace Saturday dinner with a higher-rated American restaurant that stays open after 9 PM and keep it within a 10-minute drive of downtown.
+          </div>
+          <div class="quick-actions">
+            <span class="action">Reoptimize day</span>
+            <span class="action">Add lunch</span>
+            <span class="action">Relax schedule</span>
+            <span class="action">Switch long walks to taxi</span>
+          </div>
+          <div class="diff">
+            Planned command diff:
+            <br>
+            `replace_place(item_dinner, near=downtown, min_rating=4.5, cuisine=american)`
+            <br>
+            `set_transport_mode(item_walk_to_dinner, mode=drive)`
+            <br>
+            `regenerate_markdown(day=2026-04-12)`
+          </div>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

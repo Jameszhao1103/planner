@@ -1,0 +1,636 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://planner.local/schemas/itinerary.schema.json",
+  "title": "Itinerary Workspace State",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "trip_id",
+    "version",
+    "title",
+    "timezone",
+    "start_date",
+    "end_date",
+    "preferences",
+    "days",
+    "places",
+    "routes",
+    "conflicts",
+    "change_log"
+  ],
+  "properties": {
+    "trip_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timezone": {
+      "type": "string",
+      "minLength": 1
+    },
+    "start_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "end_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "travelers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/traveler"
+      },
+      "default": []
+    },
+    "preferences": {
+      "$ref": "#/$defs/preferences"
+    },
+    "days": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/day"
+      }
+    },
+    "places": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/place"
+      }
+    },
+    "routes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/route"
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/conflict"
+      }
+    },
+    "markdown_sections": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/markdownSection"
+      },
+      "default": []
+    },
+    "change_log": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/changeLogEntry"
+      }
+    }
+  },
+  "$defs": {
+    "traveler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "age_band": {
+          "type": "string",
+          "enum": [
+            "child",
+            "adult",
+            "senior"
+          ]
+        },
+        "mobility_notes": {
+          "type": "string"
+        }
+      }
+    },
+    "preferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pace",
+        "max_walk_minutes",
+        "preferred_transport_modes",
+        "meal_windows"
+      ],
+      "properties": {
+        "pace": {
+          "type": "string",
+          "enum": [
+            "relaxed",
+            "balanced",
+            "packed"
+          ]
+        },
+        "max_walk_minutes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "preferred_transport_modes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "walk",
+              "drive",
+              "taxi",
+              "transit",
+              "flight"
+            ]
+          }
+        },
+        "meal_windows": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "lunch",
+            "dinner"
+          ],
+          "properties": {
+            "breakfast": {
+              "$ref": "#/$defs/timeWindow"
+            },
+            "lunch": {
+              "$ref": "#/$defs/timeWindow"
+            },
+            "dinner": {
+              "$ref": "#/$defs/timeWindow"
+            }
+          }
+        },
+        "must_visit_place_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "avoid_place_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      }
+    },
+    "timeWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "type": "string",
+          "pattern": "^[0-2][0-9]:[0-5][0-9]$"
+        },
+        "end": {
+          "type": "string",
+          "pattern": "^[0-2][0-9]:[0-5][0-9]$"
+        }
+      }
+    },
+    "day": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "date",
+        "label",
+        "items"
+      ],
+      "properties": {
+        "date": {
+          "type": "string",
+          "format": "date"
+        },
+        "label": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "start_at",
+        "end_at",
+        "status",
+        "locked",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "flight",
+            "transit",
+            "check_in",
+            "check_out",
+            "lodging",
+            "activity",
+            "meal",
+            "buffer",
+            "free_time"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "subtitle": {
+          "type": "string"
+        },
+        "start_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "end_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration_minutes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "confirmed",
+            "suggested",
+            "draft"
+          ]
+        },
+        "locked": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "user",
+            "ai",
+            "imported"
+          ]
+        },
+        "category": {
+          "type": "string"
+        },
+        "place_id": {
+          "type": "string"
+        },
+        "route_id": {
+          "type": "string"
+        },
+        "reservation_id": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "slack_minutes_before": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "slack_minutes_after": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "validation_conflict_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      }
+    },
+    "place": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "place_id",
+        "name",
+        "lat",
+        "lng",
+        "category"
+      ],
+      "properties": {
+        "place_id": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "google_places",
+            "manual"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "airport",
+            "hotel",
+            "restaurant",
+            "museum",
+            "park",
+            "shopping",
+            "landmark",
+            "station",
+            "other"
+          ]
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lng": {
+          "type": "number"
+        },
+        "address": {
+          "type": "string"
+        },
+        "rating": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "price_level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "opening_hours": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/openingHours"
+          },
+          "default": []
+        },
+        "maps_uri": {
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+    "openingHours": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "weekday",
+        "open",
+        "close"
+      ],
+      "properties": {
+        "weekday": {
+          "type": "string",
+          "enum": [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday"
+          ]
+        },
+        "open": {
+          "type": "string",
+          "pattern": "^[0-2][0-9]:[0-5][0-9]$"
+        },
+        "close": {
+          "type": "string",
+          "pattern": "^[0-2][0-9]:[0-5][0-9]$"
+        }
+      }
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "route_id",
+        "mode",
+        "from_item_id",
+        "to_item_id",
+        "duration_minutes",
+        "distance_meters"
+      ],
+      "properties": {
+        "route_id": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "walk",
+            "drive",
+            "taxi",
+            "transit",
+            "flight"
+          ]
+        },
+        "from_item_id": {
+          "type": "string"
+        },
+        "to_item_id": {
+          "type": "string"
+        },
+        "duration_minutes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "distance_meters": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "polyline": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "google_routes",
+            "manual"
+          ]
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/routeStep"
+          },
+          "default": []
+        }
+      }
+    },
+    "routeStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instruction",
+        "duration_minutes",
+        "distance_meters"
+      ],
+      "properties": {
+        "instruction": {
+          "type": "string"
+        },
+        "duration_minutes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "distance_meters": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "polyline": {
+          "type": "string"
+        }
+      }
+    },
+    "conflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "severity",
+        "message",
+        "item_ids"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "opening_hours_conflict",
+            "overlap_conflict",
+            "travel_time_underestimated",
+            "locked_item_violation",
+            "meal_window_missing",
+            "pace_limit_exceeded",
+            "reservation_time_mismatch"
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "item_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resolution_hint": {
+          "type": "string"
+        }
+      }
+    },
+    "markdownSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "day_date",
+        "content"
+      ],
+      "properties": {
+        "day_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "content": {
+          "type": "string"
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "changeLogEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "timestamp",
+        "actor",
+        "summary"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "actor": {
+          "type": "string",
+          "enum": [
+            "user",
+            "assistant",
+            "system"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "command_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      }
+    }
+  }
+}

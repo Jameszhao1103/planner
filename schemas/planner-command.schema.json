@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://planner.local/schemas/planner-command.schema.json",
+  "title": "Planner Command",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "command_id",
+    "action",
+    "reason"
+  ],
+  "properties": {
+    "command_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "lock_item",
+        "unlock_item",
+        "move_item",
+        "replace_place",
+        "insert_item",
+        "delete_item",
+        "set_transport_mode",
+        "optimize_day",
+        "relax_day",
+        "compress_day",
+        "fill_meal",
+        "regenerate_markdown",
+        "resolve_conflict"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "preview_only": {
+      "type": "boolean",
+      "default": false
+    },
+    "day_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "item_id": {
+      "type": "string"
+    },
+    "target_item_id": {
+      "type": "string"
+    },
+    "place_query": {
+      "type": "string"
+    },
+    "place_id": {
+      "type": "string"
+    },
+    "new_start_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "new_end_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "walk",
+        "drive",
+        "taxi",
+        "transit",
+        "flight"
+      ]
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "activity",
+        "meal",
+        "buffer",
+        "free_time",
+        "transit"
+      ]
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "near_place_id": {
+          "type": "string"
+        },
+        "min_rating": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "max_price_level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "respect_locks": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_walk_minutes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "payload": {
+      "type": "object"
+    }
+  }
+}

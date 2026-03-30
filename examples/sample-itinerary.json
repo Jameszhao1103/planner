@@ -1,0 +1,280 @@
+{
+  "trip_id": "trip_asheville_001",
+  "version": 1,
+  "title": "Asheville Long Weekend",
+  "timezone": "America/New_York",
+  "start_date": "2026-04-12",
+  "end_date": "2026-04-14",
+  "travelers": [
+    {
+      "id": "traveler_1",
+      "name": "James"
+    },
+    {
+      "id": "traveler_2",
+      "name": "Mina"
+    }
+  ],
+  "preferences": {
+    "pace": "balanced",
+    "max_walk_minutes": 20,
+    "preferred_transport_modes": [
+      "drive",
+      "walk"
+    ],
+    "meal_windows": {
+      "lunch": {
+        "start": "11:30",
+        "end": "13:30"
+      },
+      "dinner": {
+        "start": "18:00",
+        "end": "20:30"
+      }
+    },
+    "must_visit_place_ids": [
+      "place_biltmore"
+    ],
+    "avoid_place_ids": []
+  },
+  "days": [
+    {
+      "date": "2026-04-12",
+      "label": "Day 1",
+      "summary": "Arrival, hotel check-in, and downtown dinner.",
+      "items": [
+        {
+          "id": "item_flight_arrival",
+          "kind": "flight",
+          "title": "Arrive at AVL",
+          "start_at": "2026-04-12T09:10:00-04:00",
+          "end_at": "2026-04-12T10:45:00-04:00",
+          "duration_minutes": 95,
+          "status": "confirmed",
+          "locked": true,
+          "source": "imported",
+          "category": "flight",
+          "place_id": "place_avl",
+          "tags": [
+            "anchor"
+          ],
+          "validation_conflict_ids": []
+        },
+        {
+          "id": "item_buffer_arrival",
+          "kind": "buffer",
+          "title": "Arrival buffer",
+          "start_at": "2026-04-12T10:45:00-04:00",
+          "end_at": "2026-04-12T11:15:00-04:00",
+          "duration_minutes": 30,
+          "status": "suggested",
+          "locked": false,
+          "source": "ai",
+          "category": "buffer",
+          "tags": [],
+          "validation_conflict_ids": []
+        },
+        {
+          "id": "item_hotel_checkin",
+          "kind": "check_in",
+          "title": "Check in at The Foundry Hotel",
+          "start_at": "2026-04-12T11:45:00-04:00",
+          "end_at": "2026-04-12T12:15:00-04:00",
+          "duration_minutes": 30,
+          "status": "suggested",
+          "locked": false,
+          "source": "ai",
+          "category": "lodging",
+          "place_id": "place_foundry",
+          "route_id": "route_avl_to_foundry",
+          "tags": [],
+          "validation_conflict_ids": []
+        },
+        {
+          "id": "item_lunch",
+          "kind": "meal",
+          "title": "Lunch at White Duck Taco Shop",
+          "start_at": "2026-04-12T12:30:00-04:00",
+          "end_at": "2026-04-12T13:30:00-04:00",
+          "duration_minutes": 60,
+          "status": "suggested",
+          "locked": false,
+          "source": "ai",
+          "category": "lunch",
+          "place_id": "place_white_duck",
+          "route_id": "route_foundry_to_white_duck",
+          "tags": [],
+          "validation_conflict_ids": []
+        },
+        {
+          "id": "item_walk_river_arts",
+          "kind": "activity",
+          "title": "River Arts District walk",
+          "start_at": "2026-04-12T14:00:00-04:00",
+          "end_at": "2026-04-12T16:00:00-04:00",
+          "duration_minutes": 120,
+          "status": "suggested",
+          "locked": false,
+          "source": "ai",
+          "category": "sightseeing",
+          "place_id": "place_river_arts",
+          "route_id": "route_white_duck_to_river_arts",
+          "tags": [],
+          "validation_conflict_ids": []
+        },
+        {
+          "id": "item_dinner",
+          "kind": "meal",
+          "title": "Dinner at Cúrate",
+          "start_at": "2026-04-12T18:30:00-04:00",
+          "end_at": "2026-04-12T20:00:00-04:00",
+          "duration_minutes": 90,
+          "status": "suggested",
+          "locked": false,
+          "source": "ai",
+          "category": "dinner",
+          "place_id": "place_curate",
+          "route_id": "route_river_arts_to_curate",
+          "tags": [],
+          "validation_conflict_ids": [
+            "conflict_curate_close"
+          ]
+        }
+      ]
+    }
+  ],
+  "places": [
+    {
+      "place_id": "place_avl",
+      "provider": "manual",
+      "name": "Asheville Regional Airport",
+      "category": "airport",
+      "lat": 35.4362,
+      "lng": -82.5418,
+      "address": "61 Terminal Dr, Fletcher, NC 28732"
+    },
+    {
+      "place_id": "place_foundry",
+      "provider": "manual",
+      "name": "The Foundry Hotel Asheville",
+      "category": "hotel",
+      "lat": 35.5985,
+      "lng": -82.5498,
+      "address": "51 S Market St, Asheville, NC 28801"
+    },
+    {
+      "place_id": "place_white_duck",
+      "provider": "manual",
+      "name": "White Duck Taco Shop",
+      "category": "restaurant",
+      "lat": 35.5794,
+      "lng": -82.5919,
+      "address": "388 Riverside Dr, Asheville, NC 28801",
+      "rating": 4.7
+    },
+    {
+      "place_id": "place_river_arts",
+      "provider": "manual",
+      "name": "River Arts District",
+      "category": "landmark",
+      "lat": 35.5798,
+      "lng": -82.5882,
+      "address": "Asheville, NC 28801"
+    },
+    {
+      "place_id": "place_curate",
+      "provider": "manual",
+      "name": "Cúrate",
+      "category": "restaurant",
+      "lat": 35.5941,
+      "lng": -82.5511,
+      "address": "13 Biltmore Ave, Asheville, NC 28801",
+      "rating": 4.7,
+      "opening_hours": [
+        {
+          "weekday": "sunday",
+          "open": "17:00",
+          "close": "19:30"
+        }
+      ]
+    },
+    {
+      "place_id": "place_biltmore",
+      "provider": "manual",
+      "name": "Biltmore Estate",
+      "category": "landmark",
+      "lat": 35.5404,
+      "lng": -82.5528,
+      "address": "1 Lodge St, Asheville, NC 28803"
+    }
+  ],
+  "routes": [
+    {
+      "route_id": "route_avl_to_foundry",
+      "mode": "drive",
+      "from_item_id": "item_flight_arrival",
+      "to_item_id": "item_hotel_checkin",
+      "duration_minutes": 30,
+      "distance_meters": 25749,
+      "provider": "manual",
+      "polyline": "encoded_polyline_drive_1"
+    },
+    {
+      "route_id": "route_foundry_to_white_duck",
+      "mode": "drive",
+      "from_item_id": "item_hotel_checkin",
+      "to_item_id": "item_lunch",
+      "duration_minutes": 15,
+      "distance_meters": 5150,
+      "provider": "manual",
+      "polyline": "encoded_polyline_drive_2"
+    },
+    {
+      "route_id": "route_white_duck_to_river_arts",
+      "mode": "walk",
+      "from_item_id": "item_lunch",
+      "to_item_id": "item_walk_river_arts",
+      "duration_minutes": 8,
+      "distance_meters": 650,
+      "provider": "manual",
+      "polyline": "encoded_polyline_walk_1"
+    },
+    {
+      "route_id": "route_river_arts_to_curate",
+      "mode": "drive",
+      "from_item_id": "item_walk_river_arts",
+      "to_item_id": "item_dinner",
+      "duration_minutes": 18,
+      "distance_meters": 4600,
+      "provider": "manual",
+      "polyline": "encoded_polyline_drive_3"
+    }
+  ],
+  "conflicts": [
+    {
+      "id": "conflict_curate_close",
+      "type": "opening_hours_conflict",
+      "severity": "warning",
+      "message": "Dinner is scheduled to end after the restaurant closes at 19:30.",
+      "item_ids": [
+        "item_dinner"
+      ],
+      "resolution_hint": "Move dinner earlier or replace it with a later-opening restaurant."
+    }
+  ],
+  "markdown_sections": [
+    {
+      "day_date": "2026-04-12",
+      "content": "## Day 1\n\n- 10:45 arrive at AVL and clear baggage claim.\n- 11:45 check in at The Foundry Hotel.\n- 12:30 lunch at White Duck Taco Shop.\n- 14:00 walk the River Arts District.\n- 18:30 dinner at Cúrate. Warning: closes before the meal ends."
+    }
+  ],
+  "change_log": [
+    {
+      "id": "change_001",
+      "timestamp": "2026-03-30T18:55:00-04:00",
+      "actor": "assistant",
+      "summary": "Generated initial day-one itinerary from arrival anchor and downtown preference.",
+      "command_ids": []
+    }
+  ]
+}
