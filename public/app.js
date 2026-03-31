@@ -21,11 +21,15 @@ const mapRuntime = {
 
 const TIMELINE_START_HOUR = 8;
 const TIMELINE_TOTAL_MINUTES = 14 * 60;
-const TIMELINE_MIN_WIDTH_PERCENT = 8.5;
-const TIMELINE_ROW_HEIGHT = 116;
-const TIMELINE_ROW_GAP = 12;
-const TIMELINE_TOP_PADDING = 12;
+const TIMELINE_MIN_WIDTH_PERCENT = 6.8;
+const TIMELINE_CARD_HEIGHT = 68;
+const TIMELINE_ROW_HEIGHT = 78;
+const TIMELINE_ROW_GAP = 10;
+const TIMELINE_TOP_PADDING = 10;
 const TIMELINE_ROW_COLLISION_GAP = 0.75;
+const TIMELINE_TRANSPORT_GAP = 14;
+const TIMELINE_TRANSPORT_HEIGHT = 18;
+const TIMELINE_BOTTOM_PADDING = 10;
 
 const elements = {
   tripTitle: document.querySelector("#tripTitle"),
@@ -33,11 +37,11 @@ const elements = {
   metaPills: document.querySelector("#metaPills"),
   dayTabs: document.querySelector("#dayTabs"),
   mapDayLabel: document.querySelector("#mapDayLabel"),
-  markdownDayLabel: document.querySelector("#markdownDayLabel"),
+  planDayLabel: document.querySelector("#planDayLabel"),
   timelineDayLabel: document.querySelector("#timelineDayLabel"),
   mapCanvas: document.querySelector("#mapCanvas"),
   mapStatus: document.querySelector("#mapStatus"),
-  markdownPanel: document.querySelector("#markdownPanel"),
+  planPanel: document.querySelector("#planPanel"),
   timelinePanel: document.querySelector("#timelinePanel"),
   assistantInput: document.querySelector("#assistantInput"),
   assistantStatus: document.querySelector("#assistantStatus"),
@@ -197,15 +201,15 @@ function render() {
   elements.tripTitle.textContent = activeTrip.title;
   elements.tripSubtitle.textContent = state.preview
     ? "Preview mode: all panels are rendering from the draft itinerary."
-    : "Shared state across map, timeline, markdown, and assistant.";
+    : "Shared state across map, timeline, plan, and assistant.";
   elements.mapDayLabel.textContent = selectedLabel;
-  elements.markdownDayLabel.textContent = selectedLabel;
+  elements.planDayLabel.textContent = selectedLabel;
   elements.timelineDayLabel.textContent = selectedLabel;
 
   renderMeta(activeTrip);
   renderDayTabs(activeTrip);
   renderMap(activeTrip, selectedDay);
-  renderMarkdown(activeTrip, selectedDay);
+  renderPlan(activeTrip, selectedDay);
   renderTimeline(activeTrip, selectedDay);
   renderAssistant(activeTrip, selectedDay);
 }
@@ -267,14 +271,35 @@ function renderMap(trip, day) {
   void renderGoogleMap(trip, items, places);
 }
 
-function renderMarkdown(trip, day) {
-  const section = trip.markdown_sections?.find((candidate) => candidate.day_date === day?.date);
-  if (!section) {
-    elements.markdownPanel.textContent = "No markdown generated.";
+function renderPlan(trip, day) {
+  const flow = buildPlanFlow(trip, day);
+  if (flow.length === 0) {
+    elements.planPanel.innerHTML = '<div class="plan-empty">No plan for this day.</div>';
     return;
   }
 
-  elements.markdownPanel.textContent = section.content;
+  elements.planPanel.innerHTML = `
+    <div class="plan-list">
+      ${flow
+        .map((block) => {
+          const warning = block.warningCount
+            ? `<span class="warning">${block.warningCount} conflict(s)</span>`
+            : "";
+          const meta = block.meta ? `<div class="plan-meta">${escapeHtml(block.meta)}</div>` : "";
+          return `
+            <article class="plan-row ${flowBlockClass(block)}">
+              <div class="plan-time">${localTime(block.start_at)}-${localTime(block.end_at)}</div>
+              <div class="plan-copy">
+                <strong>${escapeHtml(block.title)}</strong>
+                ${meta}
+                ${warning}
+              </div>
+            </article>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
 }
 
 function renderTimeline(trip, day) {
@@ -283,17 +308,35 @@ function renderTimeline(trip, day) {
     return;
   }
 
+  const model = buildTimelineModel(trip, day);
   const hourMarks = Array.from({ length: 15 }, (_, index) => `<span>${String(index + 8).padStart(2, "0")}</span>`).join("");
-  const layout = buildTimelineLayout(day.items);
-  const pills = layout.events
-    .map(({ item, left, width, top, compact }) => {
-      const warning = item.validation_conflict_ids?.length
-        ? `<span class="warning">${item.validation_conflict_ids.length} conflict(s)</span>`
+  const layout = buildTimelineLayout(model.events);
+  const eventPills = layout.events
+    .map(({ block, left, width, top, compact }) => {
+      const warning = block.warningCount
+        ? `<span class="event-alert" title="${block.warningCount} conflict(s)">${block.warningCount}</span>`
         : "";
       return `
-        <div class="event-pill ${eventClass(item)}${compact ? " compact" : ""}" style="left:${left}%;width:${width}%;top:${top}px;">
-          <strong>${escapeHtml(item.title)}</strong>
-          <small>${localTime(item.start_at)}-${localTime(item.end_at)}</small>
+        <div class="event-pill ${flowBlockClass(block)}${compact ? " compact" : ""}" style="left:${left}%;width:${width}%;top:${top}px;">
+          ${warning}
+          <strong>${escapeHtml(timelineBlockTitle(block))}</strong>
+          <small>${timelineBlockTime(block, compact)}</small>
+        </div>
+      `;
+    })
+    .join("");
+  const transportStrips = model.transports
+    .map((block) => {
+      const left = clampPercent((minutesFromDayStart(block.start_at) / TIMELINE_TOTAL_MINUTES) * 100);
+      const width = Math.max(1.8, (exactDurationMinutes(block.start_at, block.end_at) / TIMELINE_TOTAL_MINUTES) * 100);
+      const fittedLeft = Math.max(0, Math.min(100 - width, left));
+      const warning = block.warningCount
+        ? `<span class="transport-alert" title="${block.warningCount} warning(s)"></span>`
+        : "";
+      const label = width >= 5.4 ? `<span>${escapeHtml(timelineBlockTitle(block))}</span>` : "";
+      return `
+        <div class="transport-strip ${block.transportClassName ?? ""}" style="left:${fittedLeft}%;width:${width}%;top:${layout.transportTop}px;">
+          ${label}
           ${warning}
         </div>
       `;
@@ -301,11 +344,12 @@ function renderTimeline(trip, day) {
     .join("");
 
   elements.timelinePanel.innerHTML = `
-    <div class="timeline-board" style="--timeline-rows:${layout.rows};">
-      <div class="timeline-spacer"></div>
+    <div class="timeline-board" style="--timeline-rows:${layout.rows}; --timeline-height:${layout.totalHeight}px;">
       <div class="hour-ruler">${hourMarks}</div>
-      <div class="lane-label">Day Flow</div>
-      <div class="lane-grid">${pills}</div>
+      <div class="lane-grid">
+        ${eventPills}
+        ${transportStrips}
+      </div>
     </div>
   `;
 }
@@ -921,12 +965,13 @@ function buildTimelineLayout(items) {
   const events = items
     .slice()
     .sort((left, right) => new Date(left.start_at).getTime() - new Date(right.start_at).getTime())
-    .map((item) => {
-      const startPercent = clampPercent((minutesFromDayStart(item.start_at) / TIMELINE_TOTAL_MINUTES) * 100);
-      const actualWidth = Math.max(4, (durationMinutes(item.start_at, item.end_at) / TIMELINE_TOTAL_MINUTES) * 100);
+    .map((block) => {
+      const displayTitle = timelineBlockTitle(block);
+      const startPercent = clampPercent((minutesFromDayStart(block.start_at) / TIMELINE_TOTAL_MINUTES) * 100);
+      const actualWidth = Math.max(4, (durationMinutes(block.start_at, block.end_at) / TIMELINE_TOTAL_MINUTES) * 100);
       const minimumWidth = Math.min(
         16,
-        Math.max(TIMELINE_MIN_WIDTH_PERCENT, 5.6 + item.title.length * 0.12)
+        Math.max(TIMELINE_MIN_WIDTH_PERCENT, 5.4 + displayTitle.length * 0.14)
       );
       const width = Math.max(actualWidth, minimumWidth);
       const left = Math.max(0, Math.min(100 - width, startPercent));
@@ -940,7 +985,7 @@ function buildTimelineLayout(items) {
       rowEnds[rowIndex] = left + width + TIMELINE_ROW_COLLISION_GAP;
 
       return {
-        item,
+        block,
         left,
         width,
         compact: actualWidth < TIMELINE_MIN_WIDTH_PERCENT,
@@ -948,14 +993,233 @@ function buildTimelineLayout(items) {
       };
     });
 
+  const rows = Math.max(1, rowEnds.length);
+  const eventAreaHeight =
+    TIMELINE_TOP_PADDING +
+    rows * TIMELINE_CARD_HEIGHT +
+    Math.max(0, rows - 1) * TIMELINE_ROW_GAP;
+  const transportTop = eventAreaHeight + TIMELINE_TRANSPORT_GAP;
+
   return {
     events,
-    rows: Math.max(1, rowEnds.length),
+    rows,
+    transportTop,
+    totalHeight: transportTop + TIMELINE_TRANSPORT_HEIGHT + TIMELINE_BOTTOM_PADDING,
   };
+}
+
+function buildDayFlow(trip, day) {
+  if (!day) {
+    return [];
+  }
+
+  const routesById = new Map(trip.routes.map((route) => [route.route_id, route]));
+  const placesById = new Map(trip.places.map((place) => [place.place_id, place]));
+  const items = day.items
+    .slice()
+    .sort((left, right) => new Date(left.start_at).getTime() - new Date(right.start_at).getTime());
+  const flow = [];
+
+  items.forEach((item, index) => {
+    const previous = index > 0 ? items[index - 1] : null;
+    const route = item.route_id ? routesById.get(item.route_id) : undefined;
+    const gapMinutes = previous ? exactDurationMinutes(previous.end_at, item.start_at) : 0;
+
+    if (shouldInsertSyntheticTransit(previous, item, route, gapMinutes)) {
+      flow.push(makeTransitFlowBlock(trip, previous, item, route, placesById, gapMinutes));
+    }
+
+    flow.push(makeItemFlowBlock(item, placesById));
+  });
+
+  return flow;
+}
+
+function buildPlanFlow(trip, day) {
+  return buildDayFlow(trip, day).filter((block) => block.kind !== "synthetic_transit");
+}
+
+function buildTimelineModel(trip, day) {
+  const flow = buildDayFlow(trip, day);
+  return {
+    events: flow.filter((block) => block.kind !== "synthetic_transit"),
+    transports: flow.filter((block) => block.kind === "synthetic_transit"),
+  };
+}
+
+function shouldInsertSyntheticTransit(previous, current, route, gapMinutes) {
+  return Boolean(
+    previous &&
+      route &&
+      gapMinutes > 0 &&
+      route.from_item_id === previous.id &&
+      route.to_item_id === current.id &&
+      current.kind !== "transit" &&
+      current.kind !== "flight"
+  );
+}
+
+function makeItemFlowBlock(item, placesById) {
+  const place = item.place_id ? placesById.get(item.place_id) : undefined;
+  return {
+    id: `flow_item_${item.id}`,
+    kind: item.kind,
+    title: item.title,
+    timelineTitle: buildTimelineItemTitle(item, place),
+    start_at: item.start_at,
+    end_at: item.end_at,
+    warningCount: item.validation_conflict_ids?.length ?? 0,
+    meta: buildItemMeta(item, place),
+    className: eventClass(item),
+  };
+}
+
+function makeTransitFlowBlock(trip, previous, current, route, placesById, gapMinutes) {
+  const destination = current.place_id ? placesById.get(current.place_id) : undefined;
+  return {
+    id: `flow_route_${route.route_id}`,
+    kind: "synthetic_transit",
+    title: `${transportLabel(route.mode)} to ${destination?.name ?? current.title}`,
+    timelineTitle: route.mode.toLowerCase(),
+    start_at: previous.end_at,
+    end_at: current.start_at,
+    warningCount: countRouteWarnings(trip, previous.id, current.id),
+    meta: buildTransitMeta(route, gapMinutes),
+    className: "travel-block",
+    transportClassName: route.mode,
+  };
+}
+
+function buildItemMeta(item, place) {
+  const details = [];
+  const typeLabel = itemTypeLabel(item);
+  if (typeLabel) {
+    details.push(typeLabel);
+  }
+
+  if (place?.name && !normalizeText(item.title).includes(normalizeText(place.name))) {
+    details.push(place.name);
+  }
+
+  return details.join(" · ");
+}
+
+function buildTransitMeta(route, gapMinutes) {
+  const parts = [`${transportLabel(route.mode)} · route ${route.duration_minutes} min`];
+  if (gapMinutes > route.duration_minutes) {
+    parts.push(`scheduled window ${gapMinutes} min`);
+  }
+  return parts.join(" · ");
+}
+
+function flowBlockClass(block) {
+  return block.className;
+}
+
+function timelineBlockTitle(block) {
+  if (block.timelineTitle) {
+    return block.timelineTitle;
+  }
+
+  return block.title;
+}
+
+function timelineBlockTime(block, compact) {
+  if (compact) {
+    return localTime(block.start_at);
+  }
+
+  return `${localTime(block.start_at)}-${localTime(block.end_at)}`;
+}
+
+function transportLabel(mode) {
+  if (mode === "walk") return "Walk";
+  if (mode === "transit") return "Transit";
+  if (mode === "taxi") return "Taxi";
+  return "Drive";
+}
+
+function itemTypeLabel(item) {
+  if (item.kind === "meal") {
+    return capitalize(item.category ?? "meal");
+  }
+  if (item.kind === "check_in") return "Hotel check-in";
+  if (item.kind === "check_out") return "Hotel check-out";
+  if (item.kind === "buffer") return "Buffer";
+  if (item.kind === "flight") return "Flight";
+  if (item.kind === "transit") return "Transit";
+  if (item.kind === "activity") return capitalize(item.category ?? "activity");
+  return capitalize(item.kind.replace(/_/g, " "));
+}
+
+function buildTimelineItemTitle(item, place) {
+  if (item.kind === "meal") {
+    return capitalize(item.category ?? "meal");
+  }
+
+  if (item.kind === "check_in") {
+    return "Check-in";
+  }
+
+  if (item.kind === "check_out") {
+    return "Check-out";
+  }
+
+  if (item.kind === "buffer") {
+    return normalizeText(item.title).includes("hotel") ? "Hotel reset" : "Buffer";
+  }
+
+  if (item.kind === "flight") {
+    const airportCode = extractAirportCode(item.title) ?? extractAirportCode(place?.name);
+    return airportCode ? `Arrive ${airportCode}` : "Arrival";
+  }
+
+  if (item.kind === "activity") {
+    return shortenTimelineLabel(place?.name ?? item.title);
+  }
+
+  return shortenTimelineLabel(place?.name ?? item.title);
+}
+
+function countRouteWarnings(trip, fromItemId, toItemId) {
+  return trip.conflicts.filter((conflict) => {
+    if (conflict.severity !== "warning") {
+      return false;
+    }
+
+    return conflict.item_ids.includes(fromItemId) && conflict.item_ids.includes(toItemId);
+  }).length;
 }
 
 function shortLabel(value) {
   return value.length > 18 ? `${value.slice(0, 16)}…` : value;
+}
+
+function exactDurationMinutes(startAt, endAt) {
+  return Math.max(0, Math.round((new Date(endAt).getTime() - new Date(startAt).getTime()) / 60000));
+}
+
+function capitalize(value) {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : "";
+}
+
+function normalizeText(value) {
+  return String(value).toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function shortenTimelineLabel(value) {
+  const cleaned = String(value)
+    .replace(/^the\s+/iu, "")
+    .replace(/\b(hotel asheville|hotel|district|estate|restaurant|cafe|shop|exchange|museum|park)\b/giu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const words = cleaned.split(" ").filter(Boolean);
+  return words.length <= 2 ? cleaned || value : words.slice(0, 2).join(" ");
+}
+
+function extractAirportCode(value) {
+  const match = String(value ?? "").match(/\b([A-Z]{3})\b/u);
+  return match ? match[1] : null;
 }
 
 function escapeHtml(value) {

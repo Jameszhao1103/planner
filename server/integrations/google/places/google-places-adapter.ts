@@ -167,19 +167,18 @@ function mapOpeningHours(openingHours?: GoogleOpeningHours): OpeningHoursWindow[
 }
 
 function buildPriceLevels(maxPriceLevel?: number): GooglePriceLevel[] | undefined {
-  if (maxPriceLevel === undefined) {
+  if (maxPriceLevel === undefined || maxPriceLevel <= 0) {
     return undefined;
   }
 
   const all: GooglePriceLevel[] = [
-    "PRICE_LEVEL_FREE",
     "PRICE_LEVEL_INEXPENSIVE",
     "PRICE_LEVEL_MODERATE",
     "PRICE_LEVEL_EXPENSIVE",
     "PRICE_LEVEL_VERY_EXPENSIVE",
   ];
 
-  return all.slice(0, Math.max(0, Math.min(maxPriceLevel + 1, all.length)));
+  return all.slice(0, Math.max(0, Math.min(maxPriceLevel, all.length)));
 }
 
 function mapPriceLevel(value?: GooglePriceLevel): number | undefined {
