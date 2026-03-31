@@ -19,6 +19,7 @@ export async function handleAppRequest(runtime, request) {
         workspace: {
           selected_day: trip.days[0]?.date ?? null,
           summary_counts: summarizeTrip(trip),
+          provider: runtime.provider,
         },
       },
       meta: {
@@ -111,6 +112,19 @@ export async function handleAppRequest(runtime, request) {
         request_id: randomUUID(),
         trip_id: nextRuntime.sampleTripId,
         version: trip?.version,
+      },
+    });
+  }
+
+  if (request.method === "GET" && pathname === "/api/debug/runtime") {
+    return json(200, {
+      ok: true,
+      data: {
+        provider: runtime.provider,
+        sample_trip_id: runtime.sampleTripId,
+      },
+      meta: {
+        request_id: randomUUID(),
       },
     });
   }

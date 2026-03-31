@@ -26,6 +26,13 @@ Run locally:
 - `npm run dev`
 - Open `http://localhost:3000`
 
+Use real Google adapters:
+
+- set `GOOGLE_MAPS_API_KEY=...`
+- optional: set `PLANNER_PROVIDER=google`
+- run `npm run test:google`
+- then run `npm run dev` and check the provider pill in the UI
+
 Test locally:
 
 - `npm test`

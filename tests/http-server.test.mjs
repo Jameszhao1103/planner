@@ -14,6 +14,7 @@ test("app router exposes trip load and preview endpoints", async () => {
   assert.equal(tripResponse.status, 200);
   assert.equal(tripResponse.payload.ok, true);
   assert.equal(tripResponse.payload.data.trip.trip_id, tripId);
+  assert.equal(tripResponse.payload.data.workspace.provider, "mock");
 
   const previewResponse = await handleAppRequest(runtime, {
     method: "POST",

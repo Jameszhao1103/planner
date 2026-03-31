@@ -6,6 +6,7 @@ const state = {
   previewMeta: null,
   selectedDay: null,
   pending: false,
+  provider: "mock",
 };
 
 const elements = {
@@ -137,6 +138,7 @@ async function loadTrip() {
   state.trip = payload.trip;
   state.preview = null;
   state.previewMeta = null;
+  state.provider = payload.workspace.provider ?? "mock";
   state.selectedDay = state.selectedDay ?? payload.workspace.selected_day ?? payload.trip.days[0]?.date ?? null;
   render();
   setPending(false, "Trip loaded.");
@@ -195,6 +197,7 @@ function renderMeta(trip) {
     pill(`${trip.travelers?.length ?? 0} travelers`),
     pill(`${items.filter((item) => item.locked).length} locked items`),
     pill(`${trip.conflicts.length} conflict${trip.conflicts.length === 1 ? "" : "s"}`),
+    pill(`provider: ${state.provider ?? "mock"}`),
     state.preview ? pill("Preview active") : "",
   ].join("");
 }

@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "node server/app/dev-server.mjs",
-    "test": "node --test tests/**/*.test.mjs"
+    "test": "node --test tests/**/*.test.mjs",
+    "test:google": "node scripts/test-google-api.mjs"
   }
 }

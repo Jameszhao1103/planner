@@ -74,14 +74,8 @@ async function recomputeRoutesForDay(
     const mode = resolveTravelMode(previousRoute?.mode, itinerary.preferences.preferred_transport_modes);
 
     const snapshot = await context.routesAdapter.computeLeg({
-      origin: {
-        placeId: fromPlace.place_id,
-        location: { lat: fromPlace.lat, lng: fromPlace.lng },
-      },
-      destination: {
-        placeId: toPlace.place_id,
-        location: { lat: toPlace.lat, lng: toPlace.lng },
-      },
+      origin: toRouteWaypoint(fromPlace),
+      destination: toRouteWaypoint(toPlace),
       travelMode: mode === "flight" ? "drive" : mode,
       includeSteps: true,
     });
@@ -387,6 +381,17 @@ function resolveTravelMode(
 
 function routeKey(fromItemId: string, toItemId: string): string {
   return `${fromItemId}__${toItemId}`;
+}
+
+function toRouteWaypoint(place: ItineraryPlace) {
+  return place.provider === "google_places"
+    ? {
+        placeId: place.place_id,
+        location: { lat: place.lat, lng: place.lng },
+      }
+    : {
+        location: { lat: place.lat, lng: place.lng },
+      };
 }
 
 function isPlaceCategory(value: string): value is ItineraryPlace["category"] {
