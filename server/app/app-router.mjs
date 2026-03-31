@@ -20,6 +20,10 @@ export async function handleAppRequest(runtime, request) {
           selected_day: trip.days[0]?.date ?? null,
           summary_counts: summarizeTrip(trip),
           provider: runtime.provider,
+          maps: {
+            browser_api_key: runtime.mapsBrowserApiKey ?? null,
+            browser_api_key_present: Boolean(runtime.mapsBrowserApiKey),
+          },
         },
       },
       meta: {
@@ -122,6 +126,7 @@ export async function handleAppRequest(runtime, request) {
       data: {
         provider: runtime.provider,
         sample_trip_id: runtime.sampleTripId,
+        maps_browser_key_present: Boolean(runtime.mapsBrowserApiKey),
       },
       meta: {
         request_id: randomUUID(),

@@ -1,3 +1,5 @@
+import { loadWorkspaceEnv } from "../../shared/env.ts";
+
 export const GOOGLE_PLACES_BASE_URL = "https://places.googleapis.com";
 export const GOOGLE_ROUTES_BASE_URL = "https://routes.googleapis.com";
 
@@ -17,7 +19,7 @@ export type ResolvedGoogleAdaptersConfig = {
 
 export function resolveGoogleAdaptersConfig(
   input: Partial<GoogleAdaptersConfig> = {},
-  env: Record<string, string | undefined> = readProcessEnv()
+  env: Record<string, string | undefined> = loadWorkspaceEnv()
 ): ResolvedGoogleAdaptersConfig {
   const apiKey = input.apiKey ?? env.GOOGLE_MAPS_API_KEY ?? env.GOOGLE_API_KEY;
   if (!apiKey) {
@@ -44,14 +46,4 @@ function parsePositiveInteger(value?: string): number | undefined {
 
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-function readProcessEnv(): Record<string, string | undefined> {
-  const maybeGlobal = globalThis as {
-    process?: {
-      env?: Record<string, string | undefined>;
-    };
-  };
-
-  return maybeGlobal.process?.env ?? {};
 }

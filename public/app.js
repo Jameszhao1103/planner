@@ -7,7 +7,25 @@ const state = {
   selectedDay: null,
   pending: false,
   provider: "mock",
+  mapsBrowserApiKey: null,
 };
+
+const mapRuntime = {
+  promise: null,
+  map: null,
+  infoWindow: null,
+  markers: [],
+  polylines: [],
+  renderToken: 0,
+};
+
+const TIMELINE_START_HOUR = 8;
+const TIMELINE_TOTAL_MINUTES = 14 * 60;
+const TIMELINE_MIN_WIDTH_PERCENT = 8.5;
+const TIMELINE_ROW_HEIGHT = 116;
+const TIMELINE_ROW_GAP = 12;
+const TIMELINE_TOP_PADDING = 12;
+const TIMELINE_ROW_COLLISION_GAP = 0.75;
 
 const elements = {
   tripTitle: document.querySelector("#tripTitle"),
@@ -18,6 +36,7 @@ const elements = {
   markdownDayLabel: document.querySelector("#markdownDayLabel"),
   timelineDayLabel: document.querySelector("#timelineDayLabel"),
   mapCanvas: document.querySelector("#mapCanvas"),
+  mapStatus: document.querySelector("#mapStatus"),
   markdownPanel: document.querySelector("#markdownPanel"),
   timelinePanel: document.querySelector("#timelinePanel"),
   assistantInput: document.querySelector("#assistantInput"),
@@ -139,6 +158,7 @@ async function loadTrip() {
   state.preview = null;
   state.previewMeta = null;
   state.provider = payload.workspace.provider ?? "mock";
+  state.mapsBrowserApiKey = payload.workspace.maps?.browser_api_key ?? null;
   state.selectedDay = state.selectedDay ?? payload.workspace.selected_day ?? payload.trip.days[0]?.date ?? null;
   render();
   setPending(false, "Trip loaded.");
@@ -198,6 +218,7 @@ function renderMeta(trip) {
     pill(`${items.filter((item) => item.locked).length} locked items`),
     pill(`${trip.conflicts.length} conflict${trip.conflicts.length === 1 ? "" : "s"}`),
     pill(`provider: ${state.provider ?? "mock"}`),
+    pill(state.mapsBrowserApiKey ? "map key detected" : "map key missing"),
     state.preview ? pill("Preview active") : "",
   ].join("");
 }
@@ -221,47 +242,29 @@ function renderMap(trip, day) {
   const items = day?.items ?? [];
   const places = uniquePlacesForDay(trip, items);
   if (!day || places.length === 0) {
+    destroyGoogleMap();
     elements.mapCanvas.innerHTML = '<div class="map-empty">No map data for this day.</div>';
+    clearMapStatus();
     return;
   }
 
-  const positions = computeMapPositions(places);
-  const routes = trip.routes.filter((route) => items.some((item) => item.id === route.to_item_id));
-  const routeHtml = routes
-    .map((route) => {
-      const fromItem = items.find((item) => item.id === route.from_item_id);
-      const toItem = items.find((item) => item.id === route.to_item_id);
-      const fromPlace = fromItem?.place_id ? positions.get(fromItem.place_id) : null;
-      const toPlace = toItem?.place_id ? positions.get(toItem.place_id) : null;
-      if (!fromPlace || !toPlace) {
-        return "";
-      }
+  if (state.provider !== "google") {
+    renderFallbackMap(trip, items, places, "Provider is mock. Restart the server in Google mode to render the live map.");
+    return;
+  }
 
-      const deltaX = toPlace.x - fromPlace.x;
-      const deltaY = toPlace.y - fromPlace.y;
-      const width = Math.sqrt(deltaX ** 2 + deltaY ** 2);
-      const angle = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
-      return `<div class="route ${route.mode}" style="left:${fromPlace.x}%;top:${fromPlace.y}%;width:${width}%;transform:rotate(${angle}deg);"></div>`;
-    })
-    .join("");
+  if (!state.mapsBrowserApiKey) {
+    renderFallbackMap(
+      trip,
+      items,
+      places,
+      "Missing browser map key. Set GOOGLE_MAPS_BROWSER_API_KEY or GOOGLE_MAPS_API_KEY and restart the server.",
+      true
+    );
+    return;
+  }
 
-  const markerHtml = items
-    .filter((item) => item.place_id)
-    .map((item) => {
-      const position = positions.get(item.place_id);
-      const place = trip.places.find((candidate) => candidate.place_id === item.place_id);
-      if (!position || !place) {
-        return "";
-      }
-
-      return `
-        <div class="marker ${markerClass(place.category)}" style="left:${position.x}%;top:${position.y}%;"></div>
-        <div class="marker-label" style="left:${position.x}%;top:${position.y}%;">${escapeHtml(shortLabel(item.title))}</div>
-      `;
-    })
-    .join("");
-
-  elements.mapCanvas.innerHTML = `${routeHtml}${markerHtml}`;
+  void renderGoogleMap(trip, items, places);
 }
 
 function renderMarkdown(trip, day) {
@@ -281,15 +284,14 @@ function renderTimeline(trip, day) {
   }
 
   const hourMarks = Array.from({ length: 15 }, (_, index) => `<span>${String(index + 8).padStart(2, "0")}</span>`).join("");
-  const pills = day.items
-    .map((item) => {
-      const left = clampPercent((minutesFromDayStart(item.start_at) / (14 * 60)) * 100);
-      const width = Math.max(4, (durationMinutes(item.start_at, item.end_at) / (14 * 60)) * 100);
+  const layout = buildTimelineLayout(day.items);
+  const pills = layout.events
+    .map(({ item, left, width, top, compact }) => {
       const warning = item.validation_conflict_ids?.length
         ? `<span class="warning">${item.validation_conflict_ids.length} conflict(s)</span>`
         : "";
       return `
-        <div class="event-pill ${eventClass(item)}" style="left:${left}%;width:${width}%;">
+        <div class="event-pill ${eventClass(item)}${compact ? " compact" : ""}" style="left:${left}%;width:${width}%;top:${top}px;">
           <strong>${escapeHtml(item.title)}</strong>
           <small>${localTime(item.start_at)}-${localTime(item.end_at)}</small>
           ${warning}
@@ -299,7 +301,7 @@ function renderTimeline(trip, day) {
     .join("");
 
   elements.timelinePanel.innerHTML = `
-    <div class="timeline-board">
+    <div class="timeline-board" style="--timeline-rows:${layout.rows};">
       <div class="timeline-spacer"></div>
       <div class="hour-ruler">${hourMarks}</div>
       <div class="lane-label">Day Flow</div>
@@ -463,6 +465,425 @@ function computeMapPositions(places) {
   return positions;
 }
 
+function renderFallbackMap(trip, items, places, message = "", isError = false) {
+  destroyGoogleMap();
+  if (places.length === 0) {
+    elements.mapCanvas.innerHTML = '<div class="map-empty">No map data for this day.</div>';
+    setMapStatus(message, isError);
+    return;
+  }
+
+  const positions = computeMapPositions(places);
+  const itemIds = new Set(items.map((item) => item.id));
+  const routes = trip.routes.filter(
+    (route) => itemIds.has(route.from_item_id) && itemIds.has(route.to_item_id)
+  );
+  const routeHtml = routes
+    .map((route) => {
+      const fromItem = items.find((item) => item.id === route.from_item_id);
+      const toItem = items.find((item) => item.id === route.to_item_id);
+      const fromPlace = fromItem?.place_id ? positions.get(fromItem.place_id) : null;
+      const toPlace = toItem?.place_id ? positions.get(toItem.place_id) : null;
+      if (!fromPlace || !toPlace) {
+        return "";
+      }
+
+      const deltaX = toPlace.x - fromPlace.x;
+      const deltaY = toPlace.y - fromPlace.y;
+      const width = Math.sqrt(deltaX ** 2 + deltaY ** 2);
+      const angle = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
+      return `<div class="route ${route.mode}" style="left:${fromPlace.x}%;top:${fromPlace.y}%;width:${width}%;transform:rotate(${angle}deg);"></div>`;
+    })
+    .join("");
+
+  const markerHtml = items
+    .filter((item) => item.place_id)
+    .map((item) => {
+      const position = positions.get(item.place_id);
+      const place = trip.places.find((candidate) => candidate.place_id === item.place_id);
+      if (!position || !place) {
+        return "";
+      }
+
+      return `
+        <div class="marker ${markerClass(place.category)}" style="left:${position.x}%;top:${position.y}%;"></div>
+        <div class="marker-label" style="left:${position.x}%;top:${position.y}%;">${escapeHtml(shortLabel(item.title))}</div>
+      `;
+    })
+    .join("");
+
+  elements.mapCanvas.innerHTML = `${routeHtml}${markerHtml}`;
+  setMapStatus(message, isError);
+}
+
+async function renderGoogleMap(trip, items, places) {
+  const renderToken = ++mapRuntime.renderToken;
+  setMapStatus("Loading Google Map…");
+
+  try {
+    const maps = await loadGoogleMapsApi(state.mapsBrowserApiKey);
+    if (renderToken !== mapRuntime.renderToken) {
+      return;
+    }
+
+    ensureGoogleMap(maps);
+    drawGoogleMap(trip, items, places, maps);
+    clearMapStatus();
+  } catch (error) {
+    if (renderToken !== mapRuntime.renderToken) {
+      return;
+    }
+
+    renderFallbackMap(
+      trip,
+      items,
+      places,
+      error instanceof Error
+        ? error.message
+        : "Failed to load Google Maps JavaScript API.",
+      true
+    );
+  }
+}
+
+function ensureGoogleMap(maps) {
+  if (mapRuntime.map) {
+    return;
+  }
+
+  elements.mapCanvas.innerHTML = "";
+  mapRuntime.map = new maps.Map(elements.mapCanvas, {
+    center: { lat: 35.5951, lng: -82.5515 },
+    zoom: 12,
+    mapTypeControl: false,
+    streetViewControl: false,
+    fullscreenControl: false,
+    clickableIcons: false,
+    gestureHandling: "cooperative",
+  });
+  mapRuntime.infoWindow = new maps.InfoWindow();
+}
+
+function drawGoogleMap(trip, items, places, maps) {
+  clearGoogleMapOverlays();
+
+  const itemIds = new Set(items.map((item) => item.id));
+  const routes = trip.routes.filter(
+    (route) => itemIds.has(route.from_item_id) && itemIds.has(route.to_item_id)
+  );
+  const placeById = new Map(trip.places.map((place) => [place.place_id, place]));
+  const bounds = new maps.LatLngBounds();
+
+  places.forEach((place, index) => {
+    bounds.extend({ lat: place.lat, lng: place.lng });
+    const marker = new maps.Marker({
+      map: mapRuntime.map,
+      position: { lat: place.lat, lng: place.lng },
+      title: place.name,
+      label: {
+        text: String(index + 1),
+        color: "#ffffff",
+        fontWeight: "700",
+      },
+      icon: {
+        path: maps.SymbolPath.CIRCLE,
+        scale: 11,
+        fillColor: markerColor(place.category),
+        fillOpacity: 1,
+        strokeColor: "#ffffff",
+        strokeWeight: 2,
+      },
+    });
+
+    marker.addListener("click", () => {
+      mapRuntime.infoWindow?.setContent(`
+        <div style="font-family:Georgia, serif; min-width:180px;">
+          <strong>${escapeHtml(place.name)}</strong><br>
+          <span>${escapeHtml(place.formatted_address ?? place.address ?? "")}</span>
+        </div>
+      `);
+      mapRuntime.infoWindow?.open({
+        anchor: marker,
+        map: mapRuntime.map,
+      });
+    });
+
+    mapRuntime.markers.push(marker);
+  });
+
+  routes.forEach((route) => {
+    const fromItem = items.find((item) => item.id === route.from_item_id);
+    const toItem = items.find((item) => item.id === route.to_item_id);
+    const fromPlace = fromItem?.place_id ? placeById.get(fromItem.place_id) : null;
+    const toPlace = toItem?.place_id ? placeById.get(toItem.place_id) : null;
+    if (!fromPlace || !toPlace) {
+      return;
+    }
+
+    const style = routeStyle(route.mode);
+    const path = buildRoutePath(maps, route, fromPlace, toPlace);
+    path.forEach((point) => {
+      bounds.extend(point);
+    });
+
+    const polyline = new maps.Polyline({
+      map: mapRuntime.map,
+      path,
+      geodesic: false,
+      strokeColor: style.strokeColor,
+      strokeOpacity: style.strokeOpacity,
+      strokeWeight: style.strokeWeight,
+      icons: style.icons,
+      zIndex: 1,
+    });
+
+    mapRuntime.polylines.push(polyline);
+  });
+
+  if (places.length === 1) {
+    mapRuntime.map?.setCenter({ lat: places[0].lat, lng: places[0].lng });
+    mapRuntime.map?.setZoom(13);
+    return;
+  }
+
+  if (!bounds.isEmpty()) {
+    mapRuntime.map?.fitBounds(bounds, 56);
+  }
+}
+
+function buildRoutePath(maps, route, fromPlace, toPlace) {
+  const stepPath = decodeRouteStepPath(maps, route.steps);
+  if (stepPath.length >= 2) {
+    return stepPath;
+  }
+
+  if (route.polyline && maps.geometry?.encoding?.decodePath) {
+    try {
+      return normalizeDecodedPath(maps.geometry.encoding.decodePath(route.polyline));
+    } catch (_error) {
+      // Fall back to a straight line if the polyline payload is not encoded.
+    }
+  }
+
+  return [
+    { lat: fromPlace.lat, lng: fromPlace.lng },
+    { lat: toPlace.lat, lng: toPlace.lng },
+  ];
+}
+
+function decodeRouteStepPath(maps, steps = []) {
+  if (!maps.geometry?.encoding?.decodePath || !Array.isArray(steps) || steps.length === 0) {
+    return [];
+  }
+
+  const points = [];
+  steps.forEach((step) => {
+    if (!step?.polyline) {
+      return;
+    }
+
+    try {
+      const decoded = normalizeDecodedPath(maps.geometry.encoding.decodePath(step.polyline));
+      decoded.forEach((point, index) => {
+        const previous = points[points.length - 1];
+        if (
+          index > 0 &&
+          previous &&
+          previous.lat === point.lat &&
+          previous.lng === point.lng
+        ) {
+          return;
+        }
+        points.push(point);
+      });
+    } catch (_error) {
+      // Ignore broken step polylines and let the overview polyline handle the route.
+    }
+  });
+
+  return points;
+}
+
+function normalizeDecodedPath(path) {
+  return Array.from(path ?? []).map((point) => ({
+    lat: typeof point.lat === "function" ? point.lat() : point.lat,
+    lng: typeof point.lng === "function" ? point.lng() : point.lng,
+  }));
+}
+
+function routeStyle(mode) {
+  if (mode === "walk") {
+    return {
+      strokeColor: "#2d6cdf",
+      strokeOpacity: 0,
+      strokeWeight: 3,
+      icons: [
+        {
+          icon: {
+            path: "M 0,-1 0,1",
+            strokeOpacity: 1,
+            strokeWeight: 2.4,
+            scale: 4,
+          },
+          offset: "0",
+          repeat: "14px",
+        },
+      ],
+    };
+  }
+
+  if (mode === "transit") {
+    return {
+      strokeColor: "#1b5cc8",
+      strokeOpacity: 0.9,
+      strokeWeight: 4,
+      icons: [
+        {
+          icon: {
+            path: "M 0,-1 0,1",
+            strokeOpacity: 1,
+            strokeColor: "#ffffff",
+            strokeWeight: 3,
+            scale: 4,
+          },
+          offset: "0",
+          repeat: "18px",
+        },
+      ],
+    };
+  }
+
+  if (mode === "taxi") {
+    return {
+      strokeColor: "#4474c4",
+      strokeOpacity: 0.92,
+      strokeWeight: 5,
+    };
+  }
+
+  return {
+    strokeColor: "#2d6cdf",
+    strokeOpacity: 0.94,
+    strokeWeight: 5,
+  };
+}
+
+function markerColor(category) {
+  if (category === "airport") return "#245fce";
+  if (category === "hotel") return "#8b4db3";
+  if (category === "restaurant") return "#d28325";
+  return "#2d8c54";
+}
+
+function clearGoogleMapOverlays() {
+  mapRuntime.markers.forEach((marker) => marker.setMap(null));
+  mapRuntime.polylines.forEach((polyline) => polyline.setMap(null));
+  mapRuntime.markers = [];
+  mapRuntime.polylines = [];
+}
+
+function destroyGoogleMap() {
+  clearGoogleMapOverlays();
+  mapRuntime.infoWindow?.close();
+  mapRuntime.infoWindow = null;
+  mapRuntime.map = null;
+}
+
+function setMapStatus(message, isError = false) {
+  if (!message) {
+    clearMapStatus();
+    return;
+  }
+
+  elements.mapStatus.textContent = message;
+  elements.mapStatus.classList.remove("hidden");
+  elements.mapStatus.classList.toggle("error", isError);
+}
+
+function clearMapStatus() {
+  elements.mapStatus.textContent = "";
+  elements.mapStatus.classList.add("hidden");
+  elements.mapStatus.classList.remove("error");
+}
+
+function loadGoogleMapsApi(apiKey) {
+  if (window.google?.maps) {
+    return Promise.resolve(window.google.maps);
+  }
+
+  if (mapRuntime.promise) {
+    return mapRuntime.promise;
+  }
+
+  mapRuntime.promise = new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      callback(value);
+    };
+
+    window.gm_authFailure = () => {
+      mapRuntime.promise = null;
+      finish(
+        reject,
+        new Error(
+          "Google Maps browser key was rejected. Check Maps JavaScript API access and localhost referrer restrictions."
+        )
+      );
+    };
+
+    const existing = document.querySelector('script[data-google-maps-loader="true"]');
+    if (existing) {
+      existing.addEventListener("load", () => finish(resolve, window.google.maps), { once: true });
+      existing.addEventListener(
+        "error",
+        () => {
+          mapRuntime.promise = null;
+          finish(reject, new Error("Failed to load Google Maps JavaScript API."));
+        },
+        { once: true }
+      );
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.async = true;
+    script.defer = true;
+    script.dataset.googleMapsLoader = "true";
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&v=weekly&libraries=geometry`;
+    script.addEventListener(
+      "load",
+      () => {
+        if (!window.google?.maps) {
+          mapRuntime.promise = null;
+          finish(reject, new Error("Google Maps loaded without window.google.maps."));
+          return;
+        }
+
+        finish(resolve, window.google.maps);
+      },
+      { once: true }
+    );
+    script.addEventListener(
+      "error",
+      () => {
+        mapRuntime.promise = null;
+        finish(
+          reject,
+          new Error("Failed to load Google Maps JavaScript API. Check the browser key and network access.")
+        );
+      },
+      { once: true }
+    );
+    document.head.appendChild(script);
+  });
+
+  return mapRuntime.promise;
+}
+
 function markerClass(category) {
   if (category === "airport") return "airport";
   if (category === "hotel") return "hotel";
@@ -484,7 +905,7 @@ function localTime(iso) {
 
 function minutesFromDayStart(iso) {
   const [hour, minute] = iso.slice(11, 16).split(":").map((part) => Number.parseInt(part, 10));
-  return Math.max(0, (hour - 8) * 60 + minute);
+  return Math.max(0, (hour - TIMELINE_START_HOUR) * 60 + minute);
 }
 
 function durationMinutes(startAt, endAt) {
@@ -493,6 +914,44 @@ function durationMinutes(startAt, endAt) {
 
 function clampPercent(value) {
   return Math.max(0, Math.min(96, value));
+}
+
+function buildTimelineLayout(items) {
+  const rowEnds = [];
+  const events = items
+    .slice()
+    .sort((left, right) => new Date(left.start_at).getTime() - new Date(right.start_at).getTime())
+    .map((item) => {
+      const startPercent = clampPercent((minutesFromDayStart(item.start_at) / TIMELINE_TOTAL_MINUTES) * 100);
+      const actualWidth = Math.max(4, (durationMinutes(item.start_at, item.end_at) / TIMELINE_TOTAL_MINUTES) * 100);
+      const minimumWidth = Math.min(
+        16,
+        Math.max(TIMELINE_MIN_WIDTH_PERCENT, 5.6 + item.title.length * 0.12)
+      );
+      const width = Math.max(actualWidth, minimumWidth);
+      const left = Math.max(0, Math.min(100 - width, startPercent));
+
+      let rowIndex = rowEnds.findIndex((occupiedUntil) => left >= occupiedUntil);
+      if (rowIndex === -1) {
+        rowIndex = rowEnds.length;
+        rowEnds.push(0);
+      }
+
+      rowEnds[rowIndex] = left + width + TIMELINE_ROW_COLLISION_GAP;
+
+      return {
+        item,
+        left,
+        width,
+        compact: actualWidth < TIMELINE_MIN_WIDTH_PERCENT,
+        top: TIMELINE_TOP_PADDING + rowIndex * (TIMELINE_ROW_HEIGHT + TIMELINE_ROW_GAP),
+      };
+    });
+
+  return {
+    events,
+    rows: Math.max(1, rowEnds.length),
+  };
 }
 
 function shortLabel(value) {

@@ -55,6 +55,7 @@ export function createSampleTrip(): Itinerary {
             locked: false,
             source: "ai",
             category: "buffer",
+            place_id: "place_avl",
           }),
           seedItem({
             id: "item_hotel_checkin",
@@ -102,6 +103,7 @@ export function createSampleTrip(): Itinerary {
             locked: false,
             source: "ai",
             category: "buffer",
+            place_id: "place_foundry",
           }),
           seedItem({
             id: "item_dinner",
@@ -181,6 +183,7 @@ export function createSampleTrip(): Itinerary {
             locked: false,
             source: "ai",
             category: "buffer",
+            place_id: "place_foundry",
           }),
           seedItem({
             id: "item_day2_dinner",

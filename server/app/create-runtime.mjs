@@ -12,10 +12,16 @@ import {
   createSampleTrip,
   SAMPLE_TRIP_ID,
 } from "../demo/sample-trip.ts";
-import { resolveRuntimeMode } from "./runtime-config.mjs";
+import {
+  resolveMapsBrowserApiKey,
+  resolveRuntimeEnv,
+  resolveRuntimeMode,
+} from "./runtime-config.mjs";
 
 export async function createRuntime() {
-  const provider = resolveRuntimeMode();
+  const env = resolveRuntimeEnv();
+  const provider = resolveRuntimeMode(env);
+  const mapsBrowserApiKey = resolveMapsBrowserApiKey(env);
   const catalog = createSamplePlaceCatalog();
   const seedTrip = createSampleTrip();
   const adapters =
@@ -45,6 +51,7 @@ export async function createRuntime() {
 
   const runtime = {
     provider,
+    mapsBrowserApiKey,
     sampleTripId: SAMPLE_TRIP_ID,
     catalog,
     placesAdapter,

@@ -162,9 +162,15 @@ body {
   overflow: hidden;
 }
 
-.map-canvas {
+.map-frame {
   position: relative;
   height: calc(100% - 34px);
+  min-height: 320px;
+}
+
+.map-canvas {
+  position: relative;
+  height: 100%;
   min-height: 320px;
   border-radius: 18px;
   overflow: hidden;
@@ -184,6 +190,25 @@ body {
       transparent 1px,
       transparent 38px
     );
+}
+
+.map-status {
+  position: absolute;
+  inset: 12px;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  border-radius: 16px;
+  text-align: center;
+  font-size: 14px;
+  background: rgba(255, 252, 247, 0.88);
+  border: 1px solid rgba(211, 200, 183, 0.78);
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.map-status.error {
+  color: var(--danger);
 }
 
 .map-empty,
@@ -303,6 +328,7 @@ body {
 }
 
 .timeline-board {
+  --timeline-rows: 1;
   display: grid;
   grid-template-columns: 112px minmax(0, 1fr);
   gap: 10px 12px;
@@ -327,13 +353,13 @@ body {
   font-size: 13px;
   display: flex;
   align-items: center;
-  min-height: 92px;
+  min-height: calc(var(--timeline-rows) * 116px + (var(--timeline-rows) - 1) * 12px + 28px);
   border-top: 1px solid rgba(211, 200, 183, 0.72);
 }
 
 .lane-grid {
   position: relative;
-  min-height: 92px;
+  min-height: calc(var(--timeline-rows) * 116px + (var(--timeline-rows) - 1) * 12px + 28px);
   border-top: 1px solid rgba(211, 200, 183, 0.72);
   background:
     repeating-linear-gradient(
@@ -347,19 +373,24 @@ body {
 
 .event-pill {
   position: absolute;
-  top: 10px;
-  min-height: 56px;
+  min-height: 92px;
   border-radius: 12px;
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   box-shadow: 0 10px 20px rgba(52, 46, 34, 0.08);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .event-pill strong {
   font-size: 14px;
+  line-height: 1.05;
+  margin-bottom: 10px;
+}
+
+.event-pill.compact strong {
+  font-size: 13px;
 }
 
 .travel-block {

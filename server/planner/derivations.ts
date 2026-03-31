@@ -50,6 +50,7 @@ async function recomputeRoutesForDay(
   context: CommandExecutionContext
 ): Promise<ItineraryRoute[]> {
   const routes: ItineraryRoute[] = [];
+  let lastPlaceBearingItem: ItineraryItem | undefined;
 
   for (let index = 1; index < day.items.length; index += 1) {
     const previous = day.items[index - 1];
@@ -58,19 +59,36 @@ async function recomputeRoutesForDay(
     current.slack_minutes_before = gapMinutes;
     previous.slack_minutes_after = gapMinutes;
 
-    if (!previous.place_id || !current.place_id) {
+    if (!current.place_id) {
       current.route_id = undefined;
+      if (previous.place_id) {
+        lastPlaceBearingItem = previous;
+      }
       continue;
     }
 
-    const fromPlace = findPlace(itinerary, previous.place_id);
+    const originItem = lastPlaceBearingItem ?? (previous.place_id ? previous : undefined);
+    if (!originItem?.place_id) {
+      current.route_id = undefined;
+      lastPlaceBearingItem = current;
+      continue;
+    }
+
+    const fromPlace = findPlace(itinerary, originItem.place_id);
     const toPlace = findPlace(itinerary, current.place_id);
     if (!fromPlace || !toPlace) {
       current.route_id = undefined;
+      lastPlaceBearingItem = current;
       continue;
     }
 
-    const previousRoute = previousRoutesByPair.get(routeKey(previous.id, current.id));
+    if (fromPlace.place_id === toPlace.place_id) {
+      current.route_id = undefined;
+      lastPlaceBearingItem = current;
+      continue;
+    }
+
+    const previousRoute = previousRoutesByPair.get(routeKey(originItem.id, current.id));
     const mode = resolveTravelMode(previousRoute?.mode, itinerary.preferences.preferred_transport_modes);
 
     const snapshot = await context.routesAdapter.computeLeg({
@@ -83,7 +101,7 @@ async function recomputeRoutesForDay(
     const route: ItineraryRoute = {
       route_id: previousRoute?.route_id ?? createId("route"),
       mode,
-      from_item_id: previous.id,
+      from_item_id: originItem.id,
       to_item_id: current.id,
       duration_minutes: snapshot.durationMinutes,
       distance_meters: snapshot.distanceMeters,
@@ -103,6 +121,7 @@ async function recomputeRoutesForDay(
     current.slack_minutes_before = Math.max(0, gapMinutes - route.duration_minutes);
     previous.slack_minutes_after = current.slack_minutes_before;
     routes.push(route);
+    lastPlaceBearingItem = current;
   }
 
   return routes;
