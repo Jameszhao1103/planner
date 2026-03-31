@@ -11,6 +11,9 @@ Files:
 - `wireframes/itinerary-workspace.html`
 - `docs/itinerary-workspace.md`
 - `docs/planner-commands.md`
+- `docs/system-architecture.md`
+- `docs/api-contracts.md`
+- `docs/frontend-store.md`
 - `schemas/itinerary.schema.json`
 - `schemas/planner-command.schema.json`
 - `examples/sample-itinerary.json`

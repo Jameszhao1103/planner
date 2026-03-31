@@ -41,9 +41,9 @@
       }
 
       .header {
-        display: flex;
-        justify-content: space-between;
-        gap: 24px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 18px 24px;
         align-items: end;
         margin-bottom: 20px;
       }
@@ -69,6 +69,8 @@
         display: flex;
         gap: 10px;
         flex-wrap: wrap;
+        justify-content: end;
+        align-self: start;
       }
 
       .pill {
@@ -77,6 +79,21 @@
         padding: 8px 14px;
         background: rgba(255, 255, 255, 0.52);
         font-size: 14px;
+      }
+
+      .global-day-switcher {
+        grid-column: 1 / -1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .switcher-label {
+        font-size: 12px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
       }
 
       .grid {
@@ -111,6 +128,7 @@
         position: relative;
         height: calc(100% - 34px);
         border-radius: 18px;
+        overflow: hidden;
         background:
           linear-gradient(130deg, rgba(20, 90, 74, 0.08), rgba(20, 90, 74, 0.02)),
           repeating-linear-gradient(
@@ -200,69 +218,144 @@
         border-radius: 50%;
       }
 
-      .timeline .day-tabs {
+      .day-tabs {
         display: flex;
         gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .timeline .day-tabs {
         margin-bottom: 14px;
       }
 
       .day-tab {
+        appearance: none;
+        cursor: pointer;
         padding: 8px 14px;
         border-radius: 999px;
         border: 1px solid var(--line);
         background: rgba(255, 255, 255, 0.56);
         font-size: 14px;
+        font-family: inherit;
       }
 
       .day-tab.active {
         background: var(--accent);
         color: #fff;
         border-color: var(--accent);
+        box-shadow: 0 10px 20px rgba(20, 90, 74, 0.18);
       }
 
-      .schedule {
+      .map-scene,
+      .day-view {
+        display: none;
+      }
+
+      .map-scene.active {
+        display: block;
+      }
+
+      .map-scene {
+        position: absolute;
+        inset: 0;
+      }
+
+      .day-view.active {
+        display: block;
+      }
+
+      .timeline-board {
         display: grid;
-        grid-template-columns: 68px 1fr;
+        grid-template-columns: 112px minmax(0, 1fr);
         gap: 10px 12px;
       }
 
-      .time {
+      .timeline-spacer {
+        height: 28px;
+      }
+
+      .hour-ruler {
+        display: grid;
+        grid-template-columns: repeat(15, minmax(0, 1fr));
+        gap: 0;
+        color: var(--muted);
+        font-size: 12px;
+        margin-bottom: 6px;
+      }
+
+      .hour-ruler span {
+        text-align: left;
+      }
+
+      .lane-label {
         color: var(--muted);
         font-size: 13px;
-        padding-top: 10px;
+        display: flex;
+        align-items: center;
+        min-height: 76px;
+        border-top: 1px solid rgba(211, 200, 183, 0.72);
       }
 
-      .block {
-        border-left: 5px solid transparent;
-        padding: 10px 12px;
+      .lane-grid {
+        position: relative;
+        min-height: 76px;
+        border-top: 1px solid rgba(211, 200, 183, 0.72);
+        background:
+          repeating-linear-gradient(
+            90deg,
+            rgba(20, 90, 74, 0.06) 0,
+            rgba(20, 90, 74, 0.06) calc(100% / 15 - 1px),
+            rgba(211, 200, 183, 0.7) calc(100% / 15 - 1px),
+            rgba(211, 200, 183, 0.7) calc(100% / 15)
+          );
+      }
+
+      .event-pill {
+        position: absolute;
+        top: 10px;
+        min-height: 50px;
         border-radius: 12px;
-        background: rgba(255, 255, 255, 0.62);
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        box-shadow: 0 10px 20px rgba(52, 46, 34, 0.08);
+        overflow: hidden;
       }
 
-      .block small {
+      .event-pill strong {
+        font-size: 14px;
+      }
+
+      .event-pill small {
         display: block;
         margin-top: 4px;
         color: var(--muted);
       }
 
       .travel-block {
-        border-color: var(--travel);
+        background: rgba(45, 108, 223, 0.22);
+        border: 1px solid rgba(45, 108, 223, 0.18);
       }
 
       .activity-block {
-        border-color: var(--activity);
+        background: rgba(45, 140, 84, 0.22);
+        border: 1px solid rgba(45, 140, 84, 0.18);
       }
 
       .meal-block {
-        border-color: var(--meal);
+        background: rgba(210, 131, 37, 0.23);
+        border: 1px solid rgba(210, 131, 37, 0.18);
       }
 
       .stay-block {
-        border-color: var(--stay);
+        background: rgba(139, 77, 179, 0.2);
+        border: 1px solid rgba(139, 77, 179, 0.16);
       }
 
       .buffer-block {
-        border-color: var(--buffer);
+        background: rgba(144, 153, 164, 0.24);
+        border: 1px solid rgba(144, 153, 164, 0.18);
       }
 
       .warning {
@@ -318,8 +411,7 @@
 
       @media (max-width: 980px) {
         .header {
-          flex-direction: column;
-          align-items: start;
+          grid-template-columns: 1fr;
         }
 
         .grid {
@@ -327,8 +419,27 @@
           grid-template-rows: auto;
         }
 
+        .meta {
+          justify-content: start;
+        }
+
         .map-canvas {
           min-height: 300px;
+        }
+
+        .timeline-board {
+          grid-template-columns: 1fr;
+        }
+
+        .timeline-spacer,
+        .lane-label {
+          min-height: auto;
+          border-top: 0;
+        }
+
+        .hour-ruler {
+          grid-template-columns: repeat(8, minmax(0, 1fr));
+          row-gap: 6px;
         }
       }
     </style>
@@ -346,22 +457,54 @@
           <span class="pill">4 locked items</span>
           <span class="pill">1 warning</span>
         </div>
+        <div class="global-day-switcher">
+          <div class="switcher-label">Global Day View</div>
+          <div class="day-tabs">
+            <button type="button" class="day-tab active" data-day-trigger="day-1">Day 1</button>
+            <button type="button" class="day-tab" data-day-trigger="day-2">Day 2</button>
+            <button type="button" class="day-tab" data-day-trigger="day-3">Day 3</button>
+          </div>
+        </div>
       </section>
 
       <section class="grid">
         <article class="panel map">
-          <h2>Map</h2>
+          <h2>Map · <span data-current-day-label>Day 1</span></h2>
           <div class="map-canvas">
-            <div class="route drive" style="left: 14%; top: 70%; width: 33%; transform: rotate(-24deg);"></div>
-            <div class="route drive" style="left: 46%; top: 56%; width: 14%; transform: rotate(88deg);"></div>
-            <div class="route walk" style="left: 58%; top: 68%; width: 11%; transform: rotate(12deg);"></div>
-            <div class="route drive" style="left: 68%; top: 70%; width: 18%; transform: rotate(-42deg);"></div>
+            <div class="map-scene active" data-day-view="day-1">
+              <div class="route drive" style="left: 14%; top: 70%; width: 33%; transform: rotate(-24deg);"></div>
+              <div class="route drive" style="left: 46%; top: 56%; width: 14%; transform: rotate(88deg);"></div>
+              <div class="route walk" style="left: 58%; top: 68%; width: 11%; transform: rotate(12deg);"></div>
+              <div class="route drive" style="left: 68%; top: 70%; width: 18%; transform: rotate(-42deg);"></div>
 
-            <div class="marker airport" style="left: 12%; top: 72%;"></div>
-            <div class="marker hotel" style="left: 46%; top: 52%;"></div>
-            <div class="marker restaurant" style="left: 57%; top: 67%;"></div>
-            <div class="marker sight" style="left: 68%; top: 69%;"></div>
-            <div class="marker restaurant" style="left: 86%; top: 56%;"></div>
+              <div class="marker airport" style="left: 12%; top: 72%;"></div>
+              <div class="marker hotel" style="left: 46%; top: 52%;"></div>
+              <div class="marker restaurant" style="left: 57%; top: 67%;"></div>
+              <div class="marker sight" style="left: 68%; top: 69%;"></div>
+              <div class="marker restaurant" style="left: 86%; top: 56%;"></div>
+            </div>
+            <div class="map-scene" data-day-view="day-2">
+              <div class="route drive" style="left: 20%; top: 72%; width: 21%; transform: rotate(-58deg);"></div>
+              <div class="route drive" style="left: 36%; top: 52%; width: 22%; transform: rotate(8deg);"></div>
+              <div class="route walk" style="left: 57%; top: 54%; width: 10%; transform: rotate(84deg);"></div>
+              <div class="route drive" style="left: 63%; top: 63%; width: 17%; transform: rotate(-14deg);"></div>
+
+              <div class="marker hotel" style="left: 18%; top: 75%;"></div>
+              <div class="marker sight" style="left: 36%; top: 48%;"></div>
+              <div class="marker restaurant" style="left: 58%; top: 52%;"></div>
+              <div class="marker sight" style="left: 64%; top: 64%;"></div>
+              <div class="marker restaurant" style="left: 80%; top: 60%;"></div>
+            </div>
+            <div class="map-scene" data-day-view="day-3">
+              <div class="route drive" style="left: 28%; top: 58%; width: 18%; transform: rotate(16deg);"></div>
+              <div class="route walk" style="left: 45%; top: 62%; width: 14%; transform: rotate(-18deg);"></div>
+              <div class="route drive" style="left: 58%; top: 57%; width: 24%; transform: rotate(28deg);"></div>
+
+              <div class="marker hotel" style="left: 26%; top: 56%;"></div>
+              <div class="marker restaurant" style="left: 45%; top: 63%;"></div>
+              <div class="marker sight" style="left: 58%; top: 56%;"></div>
+              <div class="marker airport" style="left: 82%; top: 68%;"></div>
+            </div>
           </div>
           <div class="legend-row" style="margin-top: 12px;">
             <span class="legend-chip"><span class="dot airport"></span>Airport</span>
@@ -374,67 +517,172 @@
         </article>
 
         <article class="panel markdown">
-          <h2>Markdown Plan</h2>
-          <pre>## Day 1
+          <h2>Markdown Plan · <span data-current-day-label>Day 1</span></h2>
+          <pre class="day-view active" data-day-view="day-1">## Day 1
 
 - 10:45 arrive at AVL and clear baggage claim.
 - 11:45 check in at The Foundry Hotel.
 - 12:30 lunch at White Duck Taco Shop.
 - 14:00 walk the River Arts District.
 - 18:30 dinner at Cúrate.
-- Warning: dinner overlaps with closing time.
+- Warning: dinner overlaps with closing time.</pre>
+          <pre class="day-view" data-day-view="day-2">## Day 2
 
-## Day 2
+- 09:30 leave the hotel for Biltmore Estate.
+- 10:00-13:00 estate visit and garden walk.
+- 13:20 lunch near the conservatory.
+- 15:00 coffee and bookstore stop downtown.
+- 19:00 dinner in West Asheville.</pre>
+          <pre class="day-view" data-day-view="day-3">## Day 3
 
-- 09:30 drive to Biltmore Estate.
-- 10:00 to 13:00 estate visit.
-- 13:20 lunch near the gardens.
-- 15:00 downtown coffee and free time.</pre>
+- 08:30 brunch near the hotel.
+- 10:00 pack and check out.
+- 11:00 Riverside park walk.
+- 13:30 head toward AVL for departure.
+- 15:00 airport buffer and rental car return.</pre>
         </article>
 
         <article class="panel timeline">
-          <h2>Timeline</h2>
-          <div class="day-tabs">
-            <span class="day-tab active">Day 1</span>
-            <span class="day-tab">Day 2</span>
-            <span class="day-tab">Day 3</span>
+          <h2>Timeline · <span data-current-day-label>Day 1</span></h2>
+          <div class="timeline-board day-view active" data-day-view="day-1">
+            <div class="timeline-spacer"></div>
+            <div class="hour-ruler">
+              <span>08</span>
+              <span>09</span>
+              <span>10</span>
+              <span>11</span>
+              <span>12</span>
+              <span>13</span>
+              <span>14</span>
+              <span>15</span>
+              <span>16</span>
+              <span>17</span>
+              <span>18</span>
+              <span>19</span>
+              <span>20</span>
+              <span>21</span>
+              <span>22</span>
+            </div>
+
+            <div class="lane-label">Day Flow</div>
+            <div class="lane-grid">
+              <div class="event-pill travel-block" style="left: 18.3%; width: 3.3%;">
+                <strong>Arrive</strong>
+                <small>10:45-11:15</small>
+              </div>
+              <div class="event-pill stay-block" style="left: 25%; width: 3.3%;">
+                <strong>Check in</strong>
+                <small>11:45-12:15</small>
+              </div>
+              <div class="event-pill meal-block" style="left: 30%; width: 6.7%;">
+                <strong>Lunch</strong>
+                <small>12:30-13:30 White Duck</small>
+              </div>
+              <div class="event-pill activity-block" style="left: 40%; width: 13.3%;">
+                <strong>River Arts District</strong>
+                <small>14:00-16:00 walking + galleries</small>
+              </div>
+              <div class="event-pill buffer-block" style="left: 56.7%; width: 10%;">
+                <strong>Free buffer</strong>
+                <small>16:30-18:00 rest at hotel</small>
+              </div>
+              <div class="event-pill meal-block" style="left: 70%; width: 10%;">
+                <strong>Dinner at Curate</strong>
+                <small>18:30-20:00 closes at 19:30</small>
+                <span class="warning">Ends after close</span>
+              </div>
+            </div>
           </div>
-          <div class="schedule">
-            <div class="time">10:45</div>
-            <div class="block travel-block">
-              Arrive at AVL
-              <small>Flight anchor, locked</small>
+          <div class="timeline-board day-view" data-day-view="day-2">
+            <div class="timeline-spacer"></div>
+            <div class="hour-ruler">
+              <span>08</span>
+              <span>09</span>
+              <span>10</span>
+              <span>11</span>
+              <span>12</span>
+              <span>13</span>
+              <span>14</span>
+              <span>15</span>
+              <span>16</span>
+              <span>17</span>
+              <span>18</span>
+              <span>19</span>
+              <span>20</span>
+              <span>21</span>
+              <span>22</span>
             </div>
 
-            <div class="time">11:15</div>
-            <div class="block buffer-block">
-              Arrival buffer
-              <small>Baggage claim and car pickup</small>
+            <div class="lane-label">Day Flow</div>
+            <div class="lane-grid">
+              <div class="event-pill travel-block" style="left: 10%; width: 3.3%;">
+                <strong>Drive to Biltmore</strong>
+                <small>09:30-10:00</small>
+              </div>
+              <div class="event-pill activity-block" style="left: 13.3%; width: 20%;">
+                <strong>Biltmore Estate</strong>
+                <small>10:00-13:00 mansion + gardens</small>
+              </div>
+              <div class="event-pill meal-block" style="left: 35%; width: 5.6%;">
+                <strong>Garden Lunch</strong>
+                <small>13:20-14:10</small>
+              </div>
+              <div class="event-pill activity-block" style="left: 46.7%; width: 11.7%;">
+                <strong>Coffee + Bookshop</strong>
+                <small>15:00-16:45 downtown</small>
+              </div>
+              <div class="event-pill buffer-block" style="left: 60%; width: 11.7%;">
+                <strong>Reset at Hotel</strong>
+                <small>17:00-18:45</small>
+              </div>
+              <div class="event-pill meal-block" style="left: 73.3%; width: 10%;">
+                <strong>West AVL Dinner</strong>
+                <small>19:00-20:30</small>
+              </div>
+            </div>
+          </div>
+          <div class="timeline-board day-view" data-day-view="day-3">
+            <div class="timeline-spacer"></div>
+            <div class="hour-ruler">
+              <span>08</span>
+              <span>09</span>
+              <span>10</span>
+              <span>11</span>
+              <span>12</span>
+              <span>13</span>
+              <span>14</span>
+              <span>15</span>
+              <span>16</span>
+              <span>17</span>
+              <span>18</span>
+              <span>19</span>
+              <span>20</span>
+              <span>21</span>
+              <span>22</span>
             </div>
 
-            <div class="time">11:45</div>
-            <div class="block stay-block">
-              Check in at The Foundry Hotel
-              <small>30 min drive from airport</small>
-            </div>
-
-            <div class="time">12:30</div>
-            <div class="block meal-block">
-              Lunch at White Duck Taco Shop
-              <small>15 min drive from hotel</small>
-            </div>
-
-            <div class="time">14:00</div>
-            <div class="block activity-block">
-              River Arts District walk
-              <small>2 hr activity window</small>
-            </div>
-
-            <div class="time">18:30</div>
-            <div class="block meal-block">
-              Dinner at Cúrate
-              <small>Restaurant closes at 19:30</small>
-              <span class="warning">Ends after close</span>
+            <div class="lane-label">Day Flow</div>
+            <div class="lane-grid">
+              <div class="event-pill meal-block" style="left: 3.3%; width: 10%;">
+                <strong>Brunch</strong>
+                <small>08:30-10:00</small>
+              </div>
+              <div class="event-pill stay-block" style="left: 16.7%; width: 8.3%;">
+                <strong>Pack + Check Out</strong>
+                <small>10:30-11:45</small>
+              </div>
+              <div class="event-pill activity-block" style="left: 26.7%; width: 11.7%;">
+                <strong>Riverside Walk</strong>
+                <small>12:00-13:45</small>
+              </div>
+              <div class="event-pill travel-block" style="left: 41.7%; width: 6.7%;">
+                <strong>Drive to AVL</strong>
+                <small>14:15-15:15</small>
+              </div>
+              <div class="event-pill buffer-block" style="left: 50%; width: 18.3%;">
+                <strong>Airport Buffer</strong>
+                <small>15:30-18:15 security + gate</small>
+              </div>
             </div>
           </div>
         </article>
@@ -462,5 +710,34 @@
         </article>
       </section>
     </main>
+    <script>
+      const dayButtons = document.querySelectorAll("[data-day-trigger]");
+      const dayViews = document.querySelectorAll("[data-day-view]");
+      const dayLabels = document.querySelectorAll("[data-current-day-label]");
+
+      function toDisplayLabel(dayKey) {
+        return dayKey.replace("day-", "Day ");
+      }
+
+      function setActiveDay(dayKey) {
+        dayButtons.forEach((button) => {
+          button.classList.toggle("active", button.dataset.dayTrigger === dayKey);
+        });
+
+        dayViews.forEach((view) => {
+          view.classList.toggle("active", view.dataset.dayView === dayKey);
+        });
+
+        dayLabels.forEach((label) => {
+          label.textContent = toDisplayLabel(dayKey);
+        });
+      }
+
+      dayButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          setActiveDay(button.dataset.dayTrigger);
+        });
+      });
+    </script>
   </body>
 </html>

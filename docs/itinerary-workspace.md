@@ -17,6 +17,7 @@ Every view must read from the same itinerary object. The chat surface never writ
 +----------------------------------------------------------------------------------------------------+
 | Trip Header                                                                                       |
 | Asheville Long Weekend                     3 travelers        4 conflicts        Reoptimize Day    |
+|                                  Global Day Switcher: Day 1 | Day 2 | Day 3                       |
 +---------------------------------------------------------------+------------------------------------+
 | Map                                                           | Markdown Plan                      |
 | - markers for flights, hotel, meals, sights                   | - generated from itinerary state   |
@@ -26,10 +27,10 @@ Every view must read from the same itinerary object. The chat surface never writ
 |                                                               |                                    |
 +---------------------------------------------------------------+------------------------------------+
 | Timeline                                                      | Assistant                          |
-| - day tabs                                                    | - command-first chat               |
-| - time blocks                                                 | - diff preview before apply        |
-| - conflict chips                                              | - quick actions                    |
-| - lock state and drag affordances                             | - command history                  |
+| - horizontal hourly ruler                                     | - command-first chat               |
+| - equal hour markers from morning to night                    | - diff preview before apply        |
+| - colored bars on one shared day rail                         | - quick actions                    |
+| - conflict chips on the affected bars                         | - command history                  |
 +---------------------------------------------------------------+------------------------------------+
 ```
 
@@ -37,6 +38,8 @@ Every view must read from the same itinerary object. The chat surface never writ
 
 - The top row should orient the user quickly: map for geography, markdown for the readable trip summary.
 - Timeline and assistant sit below as the main editing and replanning surfaces.
+- The active day control sits below the title and changes map, markdown, and timeline together.
+- Timeline should read as one day rail, left to right from early to late, with equally spaced hourly marks.
 - Selecting any item highlights it in all four surfaces.
 - Conflicts are anchored to itinerary items, not to a single view.
 - Locking is item-level and optionally route-level. Locked items can be moved only by explicit override.
@@ -51,6 +54,7 @@ Every view must read from the same itinerary object. The chat surface never writ
 
 The itinerary object is the source of truth. Derived artifacts are cached but not user-authored:
 
+- Header day switcher reads and writes the active day selection for the whole workspace
 - Map reads item coordinates and route polylines
 - Timeline reads `start_at`, `end_at`, status, and conflict metadata
 - Markdown reads day ordering, titles, notes, and transport summaries
