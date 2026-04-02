@@ -8,12 +8,13 @@ const state = {
   selectedItemId: null,
   workspaceTab: "selection",
   pending: false,
+  statusMessage: "Loading trip…",
+  statusTone: "neutral",
   provider: "mock",
   assistantProvider: "rules",
   mapsBrowserApiKey: null,
-  placeSearchQuery: "",
-  placeSearchResults: [],
-  placeSearchItemId: null,
+  placeSearchSession: null,
+  undoAction: null,
 };
 
 const mapRuntime = {
@@ -52,6 +53,7 @@ const elements = {
   timelinePanel: document.querySelector("#timelinePanel"),
   workspaceTabs: document.querySelectorAll("[data-workspace-tab]"),
   workspaceViews: document.querySelectorAll("[data-workspace-view]"),
+  workspaceNotice: document.querySelector("#workspaceNotice"),
   assistantInput: document.querySelector("#assistantInput"),
   focusEditor: document.querySelector("#focusEditor"),
   assistantStatus: document.querySelector("#assistantStatus"),
@@ -65,7 +67,7 @@ const elements = {
 
 bootstrap().catch((error) => {
   console.error(error);
-  elements.assistantStatus.textContent = error.message;
+  setPending(false, error.message, "error");
 });
 
 elements.assistantForm.addEventListener("submit", async (event) => {
@@ -99,14 +101,13 @@ elements.applyButton.addEventListener("click", async () => {
     state.preview = null;
     state.previewMeta = null;
     state.selectedDay = state.selectedDay ?? state.trip.days[0]?.date ?? null;
-    state.placeSearchQuery = "";
-    state.placeSearchResults = [];
-    state.placeSearchItemId = null;
+    clearPlaceSearchSession();
+    clearUndoAction();
     elements.assistantInput.value = "";
     render();
     setPending(false, "Preview applied.");
   } catch (error) {
-    setPending(false, error.message);
+    setPending(false, error.message, "error");
   }
 });
 
@@ -126,13 +127,12 @@ elements.rejectButton.addEventListener("click", async () => {
 
     state.preview = null;
     state.previewMeta = null;
-    state.placeSearchQuery = "";
-    state.placeSearchResults = [];
-    state.placeSearchItemId = null;
+    clearPlaceSearchSession();
+    clearUndoAction();
     render();
     setPending(false, "Preview discarded.");
   } catch (error) {
-    setPending(false, error.message);
+    setPending(false, error.message, "error");
   }
 });
 
@@ -147,7 +147,7 @@ elements.resetButton.addEventListener("click", async () => {
     elements.assistantInput.value = "";
     setPending(false, "Sample trip reset.");
   } catch (error) {
-    setPending(false, error.message);
+    setPending(false, error.message, "error");
   }
 });
 
@@ -179,6 +179,28 @@ elements.workspaceTabs.forEach((button) => {
   });
 });
 
+elements.workspaceNotice.addEventListener("click", async (event) => {
+  const actionTarget = event.target.closest("[data-workspace-action]");
+  if (!actionTarget) {
+    return;
+  }
+
+  if (actionTarget.dataset.workspaceAction === "undo" && state.undoAction?.commands?.length) {
+    await executeImmediately(
+      {
+        commands: state.undoAction.commands,
+      },
+      {
+        pendingMessage: "Undoing last edit…",
+        successMessage: "Undo applied.",
+        clearSearch: false,
+      }
+    );
+    state.undoAction = null;
+    renderWorkspaceNotice();
+  }
+});
+
 elements.focusEditor.addEventListener("click", async (event) => {
   const actionTarget = event.target.closest("[data-editor-action]");
   if (!actionTarget) {
@@ -193,7 +215,7 @@ elements.focusEditor.addEventListener("click", async (event) => {
 
   const action = actionTarget.dataset.editorAction;
   if (action === "toggle-lock") {
-    await previewWithInput({
+    await executeImmediately({
       commands: [
         {
           command_id: `cmd_lock_${Date.now()}`,
@@ -203,6 +225,10 @@ elements.focusEditor.addEventListener("click", async (event) => {
           reason: selectedItem.locked ? "Unlock focused item" : "Lock focused item",
         },
       ],
+    }, {
+      pendingMessage: selectedItem.locked ? "Unlocking item…" : "Locking item…",
+      successMessage: selectedItem.locked ? "Item unlocked." : "Item locked.",
+      workspaceTab: "selection",
     });
     return;
   }
@@ -213,7 +239,7 @@ elements.focusEditor.addEventListener("click", async (event) => {
       return;
     }
 
-    await previewWithInput({
+    await executeImmediately({
       commands: [
         {
           command_id: `cmd_reorder_${Date.now()}`,
@@ -227,7 +253,31 @@ elements.focusEditor.addEventListener("click", async (event) => {
           },
         },
       ],
+    }, {
+      pendingMessage: action === "move-earlier" ? "Moving item earlier…" : "Moving item later…",
+      successMessage: action === "move-earlier" ? "Moved item earlier." : "Moved item later.",
+      workspaceTab: "selection",
     });
+    return;
+  }
+
+  if (action === "add-before" || action === "add-after") {
+    const position = action === "add-before" ? "before" : "after";
+    const current = getPlaceSearchSessionForItem(selectedItem.id);
+    if (current?.mode === "insert" && current.position === position) {
+      clearPlaceSearchSession();
+    } else {
+      state.placeSearchSession = {
+        mode: "insert",
+        itemId: selectedItem.id,
+        position,
+        kind: "activity",
+        mealType: "lunch",
+        query: "",
+        results: [],
+      };
+    }
+    render();
     return;
   }
 
@@ -255,6 +305,70 @@ elements.focusEditor.addEventListener("click", async (event) => {
     });
     return;
   }
+
+  if (action === "insert-place") {
+    const placeId = actionTarget.dataset.placeId;
+    const placeName = actionTarget.dataset.placeName ?? "selected place";
+    const session = getPlaceSearchSessionForItem(selectedItem.id);
+    if (!placeId || !session || session.mode !== "insert") {
+      return;
+    }
+
+    await previewWithInput({
+      commands: [
+        {
+          command_id: `cmd_insert_${Date.now()}`,
+          action: "insert_item",
+          day_date: state.selectedDay,
+          target_item_id: selectedItem.id,
+          reason: `Insert ${placeName} ${session.position} ${selectedItem.title}`,
+          kind: session.kind,
+          place_id: placeId,
+          constraints: {
+            near_place_id: selectedItem.place_id,
+          },
+          payload: {
+            position: session.position,
+            meal_type: session.kind === "meal" ? session.mealType : undefined,
+          },
+        },
+      ],
+    });
+  }
+});
+
+elements.focusEditor.addEventListener("change", (event) => {
+  const field = event.target.closest("[data-place-session-field]");
+  if (!field) {
+    return;
+  }
+
+  const activeTrip = getActiveTrip();
+  const selectedItem = getSelectedItem(activeTrip, state.selectedDay, state.selectedItemId);
+  if (!selectedItem) {
+    return;
+  }
+
+  const session = getPlaceSearchSessionForItem(selectedItem.id);
+  if (!session || session.mode !== "insert") {
+    return;
+  }
+
+  if (field.dataset.placeSessionField === "kind") {
+    session.kind = field.value === "meal" ? "meal" : "activity";
+    if (session.kind !== "meal") {
+      session.mealType = "lunch";
+    }
+    session.results = [];
+    render();
+    return;
+  }
+
+  if (field.dataset.placeSessionField === "meal-type") {
+    session.mealType = field.value || "lunch";
+    session.results = [];
+    render();
+  }
 });
 
 elements.focusEditor.addEventListener("submit", async (event) => {
@@ -279,7 +393,7 @@ elements.focusEditor.addEventListener("submit", async (event) => {
       return;
     }
 
-    await previewWithInput({
+    await executeImmediately({
       commands: [
         {
           command_id: `cmd_move_${Date.now()}`,
@@ -291,6 +405,10 @@ elements.focusEditor.addEventListener("submit", async (event) => {
           new_end_at: replaceIsoTime(selectedItem.end_at, endTime),
         },
       ],
+    }, {
+      pendingMessage: `Updating ${selectedItem.title}…`,
+      successMessage: `${selectedItem.title} updated.`,
+      workspaceTab: "selection",
     });
     return;
   }
@@ -302,7 +420,36 @@ elements.focusEditor.addEventListener("submit", async (event) => {
       return;
     }
 
-    await searchPlacesForSelectedItem(selectedItem, query);
+    await searchPlaces({
+      mode: "replace",
+      itemId: selectedItem.id,
+      query,
+      kind: inferInsertKindFromItem(selectedItem),
+      mealType: selectedItem.kind === "meal" ? normalizeMealType(selectedItem.category) : null,
+    }, selectedItem);
+    return;
+  }
+
+  if (formMode === "insert-search") {
+    const session = getPlaceSearchSessionForItem(selectedItem.id);
+    if (!session || session.mode !== "insert") {
+      return;
+    }
+
+    const formData = new FormData(form);
+    const kind = String(formData.get("kind") ?? session.kind ?? "activity");
+    const mealType = String(formData.get("meal_type") ?? session.mealType ?? "lunch");
+    const query = String(formData.get("place_query") ?? "").trim();
+    if (!query) {
+      return;
+    }
+
+    await searchPlaces({
+      ...session,
+      kind: kind === "meal" ? "meal" : "activity",
+      mealType,
+      query,
+    }, selectedItem);
   }
 });
 
@@ -316,14 +463,13 @@ async function loadTrip() {
   state.trip = payload.trip;
   state.preview = null;
   state.previewMeta = null;
+  state.undoAction = null;
   state.provider = payload.workspace.provider ?? "mock";
   state.assistantProvider = payload.workspace.assistant?.provider ?? "rules";
   state.mapsBrowserApiKey = payload.workspace.maps?.browser_api_key ?? null;
   state.selectedDay = state.selectedDay ?? payload.workspace.selected_day ?? payload.trip.days[0]?.date ?? null;
   state.selectedItemId = inferDefaultSelectedItemId(payload.trip, state.selectedDay, state.selectedItemId);
-  state.placeSearchQuery = "";
-  state.placeSearchResults = [];
-  state.placeSearchItemId = null;
+  clearPlaceSearchSession();
   render();
   setPending(false, "Trip loaded.");
 }
@@ -331,6 +477,7 @@ async function loadTrip() {
 async function previewWithInput(input) {
   setPending(true, "Previewing change…");
   try {
+    clearUndoAction();
     const context = {
       selected_day: input.context?.selected_day ?? state.selectedDay ?? undefined,
       selected_item_id: input.context?.selected_item_id ?? state.selectedItemId ?? undefined,
@@ -349,10 +496,45 @@ async function previewWithInput(input) {
     state.preview = payload.trip_preview;
     state.previewMeta = payload;
     state.workspaceTab = "assistant";
+    clearPlaceSearchSession();
     render();
     setPending(false, "Preview ready.");
   } catch (error) {
-    setPending(false, error.message);
+    setPending(false, error.message, "error");
+  }
+}
+
+async function executeImmediately(input, options = {}) {
+  setPending(true, options.pendingMessage ?? "Saving change…");
+  try {
+    clearUndoAction();
+    const payload = await requestJson(`/api/trips/${tripId}/commands/execute`, {
+      method: "POST",
+      body: {
+        base_version: state.trip.version,
+        input: {
+          commands: input.commands ?? [],
+        },
+      },
+    });
+
+    state.trip = payload.trip;
+    state.preview = null;
+    state.previewMeta = null;
+    if (options.clearSearch !== false) {
+      clearPlaceSearchSession();
+    }
+    if (payload.undo_commands?.length) {
+      state.undoAction = {
+        commands: payload.undo_commands,
+        summary: options.undoSummary ?? payload.summary ?? "Undo last edit",
+      };
+    }
+    state.workspaceTab = options.workspaceTab ?? state.workspaceTab;
+    render();
+    setPending(false, options.successMessage ?? payload.summary ?? "Change saved.");
+  } catch (error) {
+    setPending(false, error.message, "error");
   }
 }
 
@@ -375,6 +557,7 @@ function render() {
   renderMeta(activeTrip);
   renderDayTabs(activeTrip);
   renderWorkspaceShell();
+  renderWorkspaceNotice();
   renderMap(activeTrip, selectedDay, selectedItem);
   renderPlan(activeTrip, selectedDay, selectedItem);
   renderTimeline(activeTrip, selectedDay, selectedItem);
@@ -406,9 +589,7 @@ function renderDayTabs(trip) {
       state.selectedDay = day.date;
       state.selectedItemId = inferDefaultSelectedItemId(trip, day.date, null);
       state.workspaceTab = "selection";
-      state.placeSearchResults = [];
-      state.placeSearchQuery = "";
-      state.placeSearchItemId = null;
+      clearPlaceSearchSession();
       render();
     });
     elements.dayTabs.appendChild(button);
@@ -424,6 +605,32 @@ function renderWorkspaceShell() {
   elements.workspaceViews.forEach((view) => {
     view.classList.toggle("hidden", view.dataset.workspaceView !== state.workspaceTab);
   });
+}
+
+function renderWorkspaceNotice() {
+  const hasNotice = Boolean(state.statusMessage || state.undoAction);
+  elements.workspaceNotice.classList.toggle("hidden", !hasNotice);
+  elements.workspaceNotice.classList.toggle("error", state.statusTone === "error");
+  if (!hasNotice) {
+    elements.workspaceNotice.innerHTML = "";
+    return;
+  }
+
+  const summaryText = state.undoAction?.summary ?? "";
+  const summary = summaryText ? `<strong>${escapeHtml(summaryText)}</strong>` : "";
+  const detail =
+    state.statusMessage && state.statusMessage !== summaryText
+      ? escapeHtml(state.statusMessage)
+      : "";
+  const copy = [summary, detail].filter(Boolean).join(" · ");
+  const undoButton = state.undoAction
+    ? `<button type="button" class="button" data-workspace-action="undo"${state.pending ? " disabled" : ""}>Undo</button>`
+    : "";
+
+  elements.workspaceNotice.innerHTML = `
+    <div class="workspace-notice-copy">${copy}</div>
+    ${undoButton ? `<div class="workspace-notice-actions">${undoButton}</div>` : ""}
+  `;
 }
 
 function renderMap(trip, day, selectedItem) {
@@ -603,31 +810,10 @@ function renderFocusedEditor(trip, day, selectedItem) {
     : null;
   const previous = getAdjacentItem(trip, day?.date, selectedItem.id, -1);
   const next = getAdjacentItem(trip, day?.date, selectedItem.id, 1);
-  const showingSearchResults = state.placeSearchItemId === selectedItem.id;
-  const searchResults = showingSearchResults
-    ? state.placeSearchResults
-        .map((candidate) => {
-          const meta = [
-            candidate.primaryType,
-            candidate.rating ? `★ ${candidate.rating.toFixed(1)}` : "",
-            candidate.formattedAddress ?? "",
-          ]
-            .filter(Boolean)
-            .join(" · ");
-          return `
-            <button
-              type="button"
-              class="search-result"
-              data-editor-action="replace-place"
-              data-place-id="${candidate.placeId}"
-              data-place-name="${escapeHtml(candidate.name)}">
-              <strong>${escapeHtml(candidate.name)}</strong>
-              <small>${escapeHtml(meta)}</small>
-            </button>
-          `;
-        })
-        .join("")
-    : "";
+  const searchSession = getPlaceSearchSessionForItem(selectedItem.id);
+  const replaceSession = searchSession?.mode === "replace" ? searchSession : null;
+  const insertSession = searchSession?.mode === "insert" ? searchSession : null;
+  const replaceResults = replaceSession ? renderSearchResults(replaceSession.results, "replace-place") : "";
 
   return `
     <section class="focus-card ${eventClass(selectedItem)}">
@@ -646,7 +832,7 @@ function renderFocusedEditor(trip, day, selectedItem) {
       <div class="focus-actions">
         <button type="button" class="action" data-editor-action="move-earlier" ${previous && !selectedItem.locked ? "" : "disabled"}>Move earlier</button>
         <button type="button" class="action" data-editor-action="move-later" ${next && !selectedItem.locked ? "" : "disabled"}>Move later</button>
-        <span class="focus-hint">Drag this item on the timeline to shift its time.</span>
+        <span class="focus-hint">Small edits apply immediately. Drag on the timeline to shift time.</span>
       </div>
 
       <form class="editor-form" data-editor-form="time">
@@ -658,44 +844,132 @@ function renderFocusedEditor(trip, day, selectedItem) {
           <span>End</span>
           <input type="time" name="end_time" value="${localTime(selectedItem.end_at)}" ${disabledAttr}>
         </label>
-        <button type="submit" class="button button-primary" ${disabledAttr}>Preview time change</button>
+        <button type="submit" class="button button-primary" ${disabledAttr}>Save time</button>
       </form>
 
+      <div class="focus-section">
+        <h4>Insert Stop</h4>
+        <div class="insert-actions">
+          <button type="button" class="button ${insertSession?.position === "before" ? "button-primary" : ""}" data-editor-action="add-before">Add before</button>
+          <button type="button" class="button ${insertSession?.position === "after" ? "button-primary" : ""}" data-editor-action="add-after">Add after</button>
+        </div>
+        ${insertSession ? renderInsertComposer(insertSession) : ""}
+      </div>
+
+      <div class="focus-section">
+        <h4>Replace Place</h4>
       <form class="editor-form editor-form-search" data-editor-form="place-search">
         <label class="editor-search">
           <span>Replace place</span>
           <input
             type="search"
             name="place_query"
-            value="${showingSearchResults ? escapeHtml(state.placeSearchQuery) : ""}"
+            value="${replaceSession ? escapeHtml(replaceSession.query ?? "") : ""}"
             placeholder="Search a replacement venue"
             ${disabledAttr}>
         </label>
         <button type="submit" class="button" ${disabledAttr}>Search</button>
       </form>
 
-      ${searchResults ? `<div class="search-results">${searchResults}</div>` : ""}
+      ${replaceResults ? `<div class="search-results">${replaceResults}</div>` : ""}
+      </div>
     </section>
   `;
 }
 
-async function searchPlacesForSelectedItem(selectedItem, query) {
+function renderInsertComposer(session) {
+  const kind = session.kind === "meal" ? "meal" : "activity";
+  const mealType = session.mealType ?? "lunch";
+  return `
+    <div class="insert-composer">
+      <div class="insert-composer-grid">
+        <label>
+          <span>Type</span>
+          <select name="kind" data-place-session-field="kind">
+            <option value="activity"${kind === "activity" ? " selected" : ""}>Activity</option>
+            <option value="meal"${kind === "meal" ? " selected" : ""}>Meal</option>
+          </select>
+        </label>
+        ${kind === "meal"
+          ? `<label>
+              <span>Meal type</span>
+              <select name="meal_type" data-place-session-field="meal-type">
+                <option value="breakfast"${mealType === "breakfast" ? " selected" : ""}>Breakfast</option>
+                <option value="lunch"${mealType === "lunch" ? " selected" : ""}>Lunch</option>
+                <option value="dinner"${mealType === "dinner" ? " selected" : ""}>Dinner</option>
+              </select>
+            </label>`
+          : "<div></div>"}
+      </div>
+      <form class="insert-search-form" data-editor-form="insert-search">
+        <label>
+          <span>Search query</span>
+          <input type="search" name="place_query" value="${escapeHtml(session.query ?? "")}" placeholder="Search nearby places">
+        </label>
+        <button type="submit" class="button">Search</button>
+      </form>
+      <div class="insert-composer-meta">Preview first. This will insert a new ${kind} ${session.position} the current item.</div>
+      ${insertResultsContainer(session)}
+    </div>
+  `;
+}
+
+function insertResultsContainer(session) {
+  const searchResults = renderSearchResults(session.results, "insert-place");
+  return searchResults ? `<div class="search-results">${searchResults}</div>` : "";
+}
+
+function renderSearchResults(results, action) {
+  return (results ?? [])
+    .map((candidate) => {
+      const meta = [
+        candidate.primaryType,
+        candidate.rating ? `★ ${candidate.rating.toFixed(1)}` : "",
+        candidate.formattedAddress ?? "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      return `
+        <button
+          type="button"
+          class="search-result"
+          data-editor-action="${action}"
+          data-place-id="${candidate.placeId}"
+          data-place-name="${escapeHtml(candidate.name)}">
+          <strong>${escapeHtml(candidate.name)}</strong>
+          <small>${escapeHtml(meta)}</small>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+async function searchPlaces(session, selectedItem) {
   setPending(true, `Searching places for ${selectedItem.title}…`);
   try {
+    const nextSession = {
+      ...session,
+      results: [],
+    };
     const payload = await requestJson(
-      `/api/places/search?q=${encodeURIComponent(query)}&type=${encodeURIComponent(inferSearchTypeForItem(selectedItem) ?? "")}&page_size=5`
+      `/api/places/search?q=${encodeURIComponent(session.query)}&type=${encodeURIComponent(inferSearchTypeForSession(selectedItem, session) ?? "")}&page_size=5`
     );
-    state.placeSearchQuery = query;
-    state.placeSearchResults = payload.candidates ?? [];
-    state.placeSearchItemId = selectedItem.id;
+    state.placeSearchSession = {
+      ...nextSession,
+      results: payload.candidates ?? [],
+    };
     render();
-    setPending(false, `Found ${state.placeSearchResults.length} place candidate(s).`);
+    setPending(false, `Found ${(payload.candidates ?? []).length} place candidate(s).`);
   } catch (error) {
-    setPending(false, error.message);
+    setPending(false, error.message, "error");
   }
 }
 
-function inferSearchTypeForItem(item) {
+function inferSearchTypeForSession(item, session) {
+  if (session.mode === "insert") {
+    return session.kind === "meal" ? "restaurant" : "";
+  }
+
   if (item.kind === "meal") {
     return "restaurant";
   }
@@ -705,6 +979,30 @@ function inferSearchTypeForItem(item) {
   }
 
   return "";
+}
+
+function inferInsertKindFromItem(item) {
+  return item.kind === "meal" ? "meal" : "activity";
+}
+
+function normalizeMealType(value) {
+  if (value === "breakfast" || value === "lunch" || value === "dinner") {
+    return value;
+  }
+
+  return "lunch";
+}
+
+function getPlaceSearchSessionForItem(itemId) {
+  return state.placeSearchSession?.itemId === itemId ? state.placeSearchSession : null;
+}
+
+function clearPlaceSearchSession() {
+  state.placeSearchSession = null;
+}
+
+function clearUndoAction() {
+  state.undoAction = null;
 }
 
 function inferDefaultSelectedItemId(trip, dayDate, preferredItemId) {
@@ -735,9 +1033,7 @@ function selectItem(itemId) {
   }
 
   if (state.selectedItemId !== itemId) {
-    state.placeSearchQuery = "";
-    state.placeSearchResults = [];
-    state.placeSearchItemId = null;
+    clearPlaceSearchSession();
   }
 
   state.selectedItemId = itemId;
@@ -909,7 +1205,7 @@ async function handleTimelinePointerUp(event) {
     return;
   }
 
-  await previewWithInput({
+  await executeImmediately({
     commands: [
       {
         command_id: `cmd_drag_${Date.now()}`,
@@ -921,6 +1217,10 @@ async function handleTimelinePointerUp(event) {
         new_end_at: shiftIsoByMinutes(drag.originalEndAt, deltaMinutes),
       },
     ],
+  }, {
+    pendingMessage: "Adjusting item time…",
+    successMessage: "Timeline edit applied.",
+    workspaceTab: "selection",
   });
 }
 
@@ -945,9 +1245,12 @@ async function requestJson(url, options = {}) {
   return payload.data;
 }
 
-function setPending(value, message) {
+function setPending(value, message, tone = "neutral") {
   state.pending = value;
+  state.statusMessage = message;
+  state.statusTone = tone;
   elements.assistantStatus.textContent = message;
+  renderWorkspaceNotice();
 }
 
 function pill(text) {

@@ -73,6 +73,25 @@ export async function handleAppRequest(runtime, request) {
     });
   }
 
+  if (request.method === "POST" && pathname.match(/^\/api\/trips\/[^/]+\/commands\/execute$/)) {
+    const tripId = pathname.split("/")[3];
+    const result = await runtime.plannerService.executeCommandsDirect({
+      tripId,
+      baseVersion: request.body.base_version,
+      input: request.body.input,
+    });
+
+    return json(200, {
+      ok: true,
+      data: result,
+      meta: {
+        request_id: randomUUID(),
+        trip_id: tripId,
+        version: result.trip.version,
+      },
+    });
+  }
+
   if (request.method === "POST" && pathname.match(/^\/api\/trips\/[^/]+\/commands\/apply$/)) {
     const tripId = pathname.split("/")[3];
     const result = await runtime.plannerService.applyPreview({

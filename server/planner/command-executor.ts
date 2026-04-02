@@ -44,12 +44,12 @@ async function executeCommand(
     case "lock_item":
       mutateItem(itinerary, command, (item) => {
         item.locked = true;
-      });
+      }, { respectLocks: false });
       return;
     case "unlock_item":
       mutateItem(itinerary, command, (item) => {
         item.locked = false;
-      });
+      }, { respectLocks: false });
       return;
     case "move_item":
       mutateItem(itinerary, command, (item) => {
@@ -105,10 +105,13 @@ async function executeCommand(
 function mutateItem(
   itinerary: Itinerary,
   command: PlannerCommand,
-  callback: (item: ItineraryItem) => void
+  callback: (item: ItineraryItem) => void,
+  options: { respectLocks?: boolean } = {}
 ): void {
   const item = findItem(itinerary, command.item_id);
-  assertItemEditable(item, command);
+  if (options.respectLocks !== false) {
+    assertItemEditable(item, command);
+  }
   callback(item);
 }
 
@@ -223,16 +226,36 @@ async function insertItem(
 
   const payload = command.payload ?? {};
   const templateOffset = day.items[0]?.start_at.match(/(Z|[+-]\d{2}:\d{2})$/)?.[1] ?? "Z";
-  const startAt =
-    typeof payload.start_at === "string"
-      ? payload.start_at
-      : combineLocalDateTime(day.date, coerceTime(payload.start_time) ?? "15:00", templateOffset);
+  const durationMinutes = coerceNumber(payload.duration_minutes) ?? defaultInsertDurationMinutes(command.kind);
+  const position = payload.position === "before" || payload.position === "after" ? payload.position : null;
+  const targetLocation = position ? findItemLocation(itinerary, command.target_item_id) : null;
+  const explicitStartAt = typeof payload.start_at === "string" ? payload.start_at : null;
+
+  if (command.kind === "meal" && !coerceMealType(payload.meal_type)) {
+    throw new PlannerError("invalid_command", "insert_item of kind meal requires payload.meal_type.");
+  }
+
+  if ((position && !command.target_item_id) || (command.target_item_id && !position)) {
+    throw new PlannerError(
+      "invalid_command",
+      "insert_item relative placement requires both target_item_id and payload.position."
+    );
+  }
+
+  if (position && !targetLocation) {
+    throw new PlannerError("invalid_command", `Target item not found: ${command.target_item_id}`);
+  }
+
+  const startAt = explicitStartAt
+    ?? (position && targetLocation
+      ? computeRelativeInsertStartAt(day, targetLocation, position, durationMinutes)
+      : combineLocalDateTime(day.date, coerceTime(payload.start_time) ?? "15:00", templateOffset));
   const endAt =
     typeof payload.end_at === "string"
       ? payload.end_at
-      : addMinutesToIso(startAt, coerceNumber(payload.duration_minutes) ?? 60);
+      : addMinutesToIso(startAt, durationMinutes);
 
-  const title = typeof payload.title === "string" ? payload.title : "New stop";
+  const title = typeof payload.title === "string" ? payload.title : defaultInsertedTitle(command.kind);
   const item: ItineraryItem = {
     id: createId("item"),
     kind: command.kind ?? "activity",
@@ -254,6 +277,11 @@ async function insertItem(
     upsertPlace(itinerary, place);
     item.place_id = place.place_id;
     item.title = typeof payload.title === "string" ? payload.title : resolution.title;
+  }
+
+  if (position && targetLocation) {
+    insertRelativeToTarget(day, item, targetLocation, position);
+    return;
   }
 
   day.items.push(item);
@@ -579,6 +607,93 @@ function inferInsertedCategory(command: PlannerCommand): string {
   }
 
   return command.kind ?? "activity";
+}
+
+function defaultInsertDurationMinutes(kind: PlannerCommand["kind"] | undefined): number {
+  return kind === "meal" ? 60 : 90;
+}
+
+function defaultInsertedTitle(kind: PlannerCommand["kind"] | undefined): string {
+  return kind === "meal" ? "Meal stop" : "New stop";
+}
+
+function computeRelativeInsertStartAt(
+  day: ItineraryDay,
+  targetLocation: { day: ItineraryDay; item: ItineraryItem; index: number },
+  position: "before" | "after",
+  durationMinutes: number
+): string {
+  if (day.date !== targetLocation.day.date) {
+    throw new PlannerError("invalid_command", "insert_item target must be on the same day.");
+  }
+
+  if (position === "before") {
+    const ordered = sortDayItems(day.items);
+    const targetIndex = ordered.findIndex((candidate) => candidate.id === targetLocation.item.id);
+    const previous = targetIndex > 0 ? ordered[targetIndex - 1] : null;
+    const desiredStart = addMinutesToIso(targetLocation.item.start_at, -durationMinutes);
+    return previous ? maxIso(previous.end_at, desiredStart) : desiredStart;
+  }
+
+  return targetLocation.item.end_at;
+}
+
+function insertRelativeToTarget(
+  day: ItineraryDay,
+  item: ItineraryItem,
+  targetLocation: { day: ItineraryDay; item: ItineraryItem; index: number },
+  position: "before" | "after"
+): void {
+  if (day.date !== targetLocation.day.date) {
+    throw new PlannerError("invalid_command", "insert_item target must be on the same day.");
+  }
+
+  const ordered = sortDayItems(day.items);
+  const targetIndex = ordered.findIndex((candidate) => candidate.id === targetLocation.item.id);
+  if (targetIndex === -1) {
+    throw new PlannerError("invalid_command", `Target item not found in day: ${targetLocation.item.id}`);
+  }
+
+  const insertIndex = position === "before" ? targetIndex : targetIndex + 1;
+  ordered.splice(insertIndex, 0, item);
+
+  const cursorStart = position === "before" ? item.end_at : item.end_at;
+  const shiftStartIndex = position === "before" ? insertIndex + 1 : insertIndex + 1;
+  pushOverlappingItemsForward(ordered, shiftStartIndex, cursorStart);
+  day.items = ordered;
+}
+
+function pushOverlappingItemsForward(items: ItineraryItem[], startIndex: number, cursorStart: string): void {
+  let cursor = cursorStart;
+  for (let index = startIndex; index < items.length; index += 1) {
+    const item = items[index];
+    if (item.locked) {
+      if (compareIso(item.start_at, cursor) < 0) {
+        throw new PlannerError(
+          "locked_item_violation",
+          `${item.title} is locked, so the requested insertion would force it to move.`
+        );
+      }
+      cursor = item.end_at;
+      continue;
+    }
+
+    if (compareIso(item.start_at, cursor) < 0) {
+      const duration = item.duration_minutes ?? Math.max(0, minutesBetween(item.start_at, item.end_at));
+      item.start_at = cursor;
+      item.end_at = addMinutesToIso(cursor, duration);
+    }
+
+    cursor = item.end_at;
+  }
+}
+
+function sortDayItems(items: ItineraryItem[]): ItineraryItem[] {
+  return items.slice().sort((left, right) => compareIso(left.start_at, right.start_at));
+}
+
+function maxIso(left: string, right: string): string {
+  return compareIso(left, right) >= 0 ? left : right;
 }
 
 function inferItemCategory(item: ItineraryItem, command: PlannerCommand): string {
