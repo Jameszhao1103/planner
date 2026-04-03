@@ -121,7 +121,7 @@ This is useful for validating live place search, routing, and natural-language m
 
 ### Requirements
 
-- Node.js 20+
+- Node.js 24+
 - no database required for the current MVP
 
 ### Run locally
