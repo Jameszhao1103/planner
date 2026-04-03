@@ -11,6 +11,12 @@ Instead of generating a trip once and freezing it, this project treats a trip as
 
 The product goal is simple: let AI generate and revise a realistic plan without taking control away from the user.
 
+## Screenshots
+
+### Workspace overview
+
+![Planner Workspace overview](docs/screenshots/workspace-overview.png)
+
 ## Current MVP
 
 What works today:
