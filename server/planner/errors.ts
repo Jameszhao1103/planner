@@ -2,6 +2,8 @@ export type PlannerErrorCode =
   | "trip_not_found"
   | "version_conflict"
   | "preview_not_found"
+  | "invalid_request"
+  | "request_too_large"
   | "invalid_command"
   | "command_not_supported"
   | "translator_unavailable"

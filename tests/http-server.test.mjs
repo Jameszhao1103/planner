@@ -1,30 +1,121 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readJsonBody } from "../server/app/create-server.mjs";
 import { createRuntime } from "../server/app/create-runtime.mjs";
 import { handleAppRequest, toErrorResponse } from "../server/app/app-router.mjs";
 
-async function withMockRuntime(run) {
-  const previousProvider = process.env.PLANNER_PROVIDER;
-  const previousStorageMode = process.env.PLANNER_STORAGE_MODE;
-  process.env.PLANNER_PROVIDER = "mock";
-  process.env.PLANNER_STORAGE_MODE = "memory";
-  const runtime = await createRuntime();
-  try {
-    await run(runtime);
-  } finally {
-    if (previousProvider === undefined) {
-      delete process.env.PLANNER_PROVIDER;
-    } else {
-      process.env.PLANNER_PROVIDER = previousProvider;
-    }
+async function withEnv(overrides, run) {
+  const previousValues = {
+    PLANNER_PROVIDER: process.env.PLANNER_PROVIDER,
+    PLANNER_STORAGE_MODE: process.env.PLANNER_STORAGE_MODE,
+    PLANNER_ENABLE_DEBUG_ROUTES: process.env.PLANNER_ENABLE_DEBUG_ROUTES,
+  };
 
-    if (previousStorageMode === undefined) {
-      delete process.env.PLANNER_STORAGE_MODE;
-    } else {
-      process.env.PLANNER_STORAGE_MODE = previousStorageMode;
-    }
+  applyEnvValue("PLANNER_PROVIDER", overrides.PLANNER_PROVIDER ?? "mock");
+  applyEnvValue("PLANNER_STORAGE_MODE", overrides.PLANNER_STORAGE_MODE ?? "memory");
+  applyEnvValue("PLANNER_ENABLE_DEBUG_ROUTES", overrides.PLANNER_ENABLE_DEBUG_ROUTES);
+
+  try {
+    await run();
+  } finally {
+    applyEnvValue("PLANNER_PROVIDER", previousValues.PLANNER_PROVIDER);
+    applyEnvValue("PLANNER_STORAGE_MODE", previousValues.PLANNER_STORAGE_MODE);
+    applyEnvValue("PLANNER_ENABLE_DEBUG_ROUTES", previousValues.PLANNER_ENABLE_DEBUG_ROUTES);
   }
 }
+
+function applyEnvValue(key, value) {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+
+  process.env[key] = value;
+}
+
+async function withMockRuntime(run, overrides = {}) {
+  await withEnv(overrides, async () => {
+    const runtime = await createRuntime();
+    await run(runtime);
+  });
+}
+
+test("debug routes are disabled by default", async () => {
+  await withMockRuntime(async (runtime) => {
+    const tripId = runtime.sampleTripId;
+    const tripResponse = await handleAppRequest(runtime, {
+      method: "GET",
+      url: `/api/trips/${tripId}`,
+    });
+
+    assert.equal(tripResponse.status, 200);
+    assert.equal(tripResponse.payload.data.workspace.debug.enabled, false);
+
+    const runtimeResponse = await handleAppRequest(runtime, {
+      method: "GET",
+      url: "/api/debug/runtime",
+    });
+
+    assert.equal(runtimeResponse.status, 404);
+    assert.equal(runtimeResponse.payload.ok, false);
+  });
+});
+
+test("debug routes can be enabled explicitly", async () => {
+  await withMockRuntime(async (runtime) => {
+    const tripId = runtime.sampleTripId;
+    const tripResponse = await handleAppRequest(runtime, {
+      method: "GET",
+      url: `/api/trips/${tripId}`,
+    });
+
+    assert.equal(tripResponse.status, 200);
+    assert.equal(tripResponse.payload.data.workspace.debug.enabled, true);
+
+    const metricsResponse = await handleAppRequest(runtime, {
+      method: "GET",
+      url: "/api/debug/metrics",
+    });
+
+    assert.equal(metricsResponse.status, 200);
+    assert.equal(metricsResponse.payload.ok, true);
+  }, { PLANNER_ENABLE_DEBUG_ROUTES: "1" });
+});
+
+test("server returns 400 for invalid JSON bodies", async () => {
+  await assert.rejects(
+    readJsonBody(fakeRequestFromChunks([Buffer.from("{invalid")])),
+    (error) =>
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "invalid_request" &&
+      /valid json/i.test(error.message)
+  );
+});
+
+test("server returns 413 for oversized JSON bodies", async () => {
+  await assert.rejects(
+    readJsonBody(
+      fakeRequestFromChunks([
+        Buffer.from(
+          JSON.stringify({
+            title: "Oversized request",
+            start_date: "2026-05-01",
+            end_date: "2026-05-03",
+            timezone: "America/New_York",
+            traveler_count: 2,
+            notes: "x".repeat(1_100_000),
+          })
+        ),
+      ])
+    ),
+    (error) =>
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "request_too_large" &&
+      /exceeds/i.test(error.message)
+  );
+});
 
 test("app router exposes trip load, preview, and execute endpoints", async () => {
   await withMockRuntime(async (runtime) => {
@@ -132,7 +223,7 @@ test("metrics endpoint exposes request counters", async () => {
     assert.equal(metricsResponse.status, 200);
     assert.equal(metricsResponse.payload.ok, true);
     assert.equal(typeof metricsResponse.payload.data.requests?.total, "number");
-  });
+  }, { PLANNER_ENABLE_DEBUG_ROUTES: "1" });
 });
 
 test("rename endpoint updates the trip title", async () => {
@@ -192,3 +283,37 @@ test("trip endpoints expose saved trip summaries and create a new trip", async (
     assert.ok(updatedList.payload.data.trips.some((trip) => trip.title === "Kyoto Food Weekend"));
   });
 });
+
+test("trip creation rejects invalid timezones", async () => {
+  await withMockRuntime(async (runtime) => {
+    try {
+      await handleAppRequest(runtime, {
+        method: "POST",
+        url: "/api/trips",
+        body: {
+          title: "Broken timezone trip",
+          start_date: "2026-05-01",
+          end_date: "2026-05-03",
+          timezone: "Mars/OlympusMons",
+          traveler_count: 2,
+        },
+      });
+      assert.fail("Expected invalid timezone to be rejected.");
+    } catch (error) {
+      const response = toErrorResponse(error);
+      assert.equal(response.status, 400);
+      assert.equal(response.payload.ok, false);
+      assert.match(response.payload.error.message, /invalid iana timezone/i);
+    }
+  });
+});
+
+function fakeRequestFromChunks(chunks) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const chunk of chunks) {
+        yield chunk;
+      }
+    },
+  };
+}

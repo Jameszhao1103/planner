@@ -67,6 +67,9 @@ export async function handleAppRequest(runtime, request) {
             calendar_ics_url: `/api/trips/${trip.trip_id}/export/ics`,
             print_url: `/trips/${trip.trip_id}/print`,
           },
+          debug: {
+            enabled: Boolean(runtime.debugRoutesEnabled),
+          },
         },
       },
       meta: {
@@ -187,6 +190,16 @@ export async function handleAppRequest(runtime, request) {
     });
   }
 
+  if (pathname.startsWith("/api/debug/") && !runtime.debugRoutesEnabled) {
+    return json(404, {
+      ok: false,
+      error: {
+        code: "not_found",
+        message: `No route for ${request.method} ${pathname}`,
+      },
+    });
+  }
+
   if (request.method === "POST" && pathname === "/api/debug/reset") {
     const nextRuntime = await runtime.reset();
     const trip = await nextRuntime.tripRepository.getTripById(nextRuntime.sampleTripId);
@@ -237,7 +250,13 @@ export async function handleAppRequest(runtime, request) {
 
 export function toErrorResponse(error) {
   if (error instanceof PlannerError) {
-    return json(error.code === "trip_not_found" ? 404 : 400, {
+    const status =
+      error.code === "trip_not_found"
+        ? 404
+        : error.code === "request_too_large"
+          ? 413
+          : 400;
+    return json(status, {
       ok: false,
       error: {
         code: error.code,

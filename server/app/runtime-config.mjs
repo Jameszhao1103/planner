@@ -31,6 +31,10 @@ export function resolveStorageDirectory(env = resolveRuntimeEnv()) {
   return env.PLANNER_DATA_DIR ?? ".data/trips";
 }
 
+export function resolveDebugRoutesEnabled(env = resolveRuntimeEnv()) {
+  return env.PLANNER_ENABLE_DEBUG_ROUTES === "1" || env.PLANNER_ENABLE_DEBUG_ROUTES === "true";
+}
+
 export function resolveObservabilityConfig(env = resolveRuntimeEnv()) {
   return {
     logRequests: env.PLANNER_LOG_REQUESTS !== "0",

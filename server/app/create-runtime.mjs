@@ -21,6 +21,7 @@ import { createLogger } from "../shared/logger.ts";
 import { RuntimeMetrics } from "../shared/metrics.ts";
 import {
   resolveCommandPlannerMode,
+  resolveDebugRoutesEnabled,
   resolveMapsBrowserApiKey,
   resolveObservabilityConfig,
   resolveOpenAiConfig,
@@ -38,6 +39,7 @@ export async function createRuntime() {
   const openAiConfig = resolveOpenAiConfig(env);
   const storageMode = resolveStorageMode(env);
   const storageDirectory = resolve(resolveStorageDirectory(env));
+  const debugRoutesEnabled = resolveDebugRoutesEnabled(env);
   const observability = resolveObservabilityConfig(env);
   const logger = createLogger({
     enabled: observability.logRequests,
@@ -48,7 +50,7 @@ export async function createRuntime() {
   });
   const metrics = new RuntimeMetrics();
   const catalog = createSamplePlaceCatalog();
-  const seedTrip = createSampleTrip();
+  let preparedSeedTrip = null;
   const baseAdapters =
     provider === "google"
       ? createGoogleAdapters()
@@ -67,21 +69,29 @@ export async function createRuntime() {
     metrics,
   });
   const seedNow = new Date("2026-03-30T21:00:00-04:00");
+  async function getPreparedSeedTrip() {
+    if (preparedSeedTrip) {
+      return structuredClone(preparedSeedTrip);
+    }
 
-  await recomputeDerivedState(seedTrip, {
-    placesAdapter,
-    routesAdapter,
-    now: seedNow,
-  });
+    const trip = createSampleTrip();
+    await recomputeDerivedState(trip, {
+      placesAdapter,
+      routesAdapter,
+      now: seedNow,
+    });
+    preparedSeedTrip = trip;
+    return structuredClone(preparedSeedTrip);
+  }
 
   const tripRepository =
     storageMode === "file"
       ? new FileTripRepository(storageDirectory)
-      : new InMemoryTripRepository([seedTrip]);
+      : new InMemoryTripRepository([await getPreparedSeedTrip()]);
   if (storageMode === "file") {
-    const existing = await tripRepository.getTripById(seedTrip.trip_id);
+    const existing = await tripRepository.getTripById(SAMPLE_TRIP_ID);
     if (!existing) {
-      await tripRepository.saveTrip(seedTrip);
+      await tripRepository.saveTrip(await getPreparedSeedTrip());
     }
   }
   const previewRepository = new InMemoryPreviewRepository();
@@ -111,6 +121,7 @@ export async function createRuntime() {
     assistantProvider,
     storageMode,
     storageDirectory,
+    debugRoutesEnabled,
     logger,
     metrics,
     mapsBrowserApiKey,
@@ -122,7 +133,7 @@ export async function createRuntime() {
     previewRepository,
     plannerService,
     async reset() {
-      await tripRepository.saveTrip(structuredClone(seedTrip));
+      await tripRepository.saveTrip(await getPreparedSeedTrip());
       return createRuntime();
     },
     snapshot() {
@@ -132,6 +143,7 @@ export async function createRuntime() {
         sample_trip_id: SAMPLE_TRIP_ID,
         storage_mode: storageMode,
         storage_directory: storageDirectory,
+        debug_routes_enabled: debugRoutesEnabled,
         maps_browser_key_present: Boolean(mapsBrowserApiKey),
         metrics: metrics.snapshot(),
         cache: {

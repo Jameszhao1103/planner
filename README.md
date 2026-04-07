@@ -31,7 +31,7 @@ What works today:
   - move in time
   - reorder
   - timeline drag
-- Single-step undo for direct edits
+- Multi-step undo / redo for direct edits
 - Replace a place through search + preview
 - Add a place before / after the selected item through search + preview
 - Three-view synchronization:
@@ -192,6 +192,7 @@ If you only set the server key, Google Places / Routes can still run, but the br
 ```bash
 PLANNER_STORAGE_MODE=file
 PLANNER_DATA_DIR=.data/trips
+PLANNER_ENABLE_DEBUG_ROUTES=0
 PLANNER_LOG_REQUESTS=1
 PLANNER_LOG_LEVEL=info
 PLANNER_CACHE_TTL_MS=300000
@@ -202,6 +203,8 @@ Notes:
 
 - `PLANNER_STORAGE_MODE=file` persists the canonical trip locally between restarts
 - `PLANNER_STORAGE_MODE=memory` restores the old demo-style ephemeral runtime
+- `PLANNER_ENABLE_DEBUG_ROUTES=1` exposes local-only debug routes and the `Reset sample trip` button
+- debug routes are disabled by default and should stay off for public deployments
 - request logs are JSON lines written to stdout
 - Places / Routes calls are cached in-process to reduce repeated API spend during iteration
 
@@ -234,11 +237,9 @@ npm run dev
 
 Useful live checks:
 
-- provider pill shows `google`
-- assistant provider shows `openai` when configured
-- storage pill shows `file` when persistence is enabled
 - map loads live Google tiles when `GOOGLE_MAPS_BROWSER_API_KEY` is set
 - assistant requests produce preview diffs against real providers
+- if `PLANNER_ENABLE_DEBUG_ROUTES=1`, `GET /api/debug/runtime` reports provider / storage / cache state
 
 ## Example Assistant Requests
 
@@ -260,11 +261,14 @@ Main local API routes:
 - `POST /api/trips/:tripId/commands/execute`
 - `POST /api/trips/:tripId/commands/apply`
 - `POST /api/trips/:tripId/commands/reject`
+- `GET /api/trips/:tripId/export/ics`
+- `GET /trips/:tripId/print`
+
+Debug routes are optional and disabled by default:
+
 - `POST /api/debug/reset`
 - `GET /api/debug/runtime`
 - `GET /api/debug/metrics`
-- `GET /api/trips/:tripId/export/ics`
-- `GET /trips/:tripId/print`
 
 There are two mutation paths:
 
@@ -310,10 +314,9 @@ This avoids pulling in a heavy PDF generation stack while still producing a form
 
 - persistence is file-backed for now, not yet multi-user or database-backed
 - metrics are process-local and reset when the server restarts
+- debug routes are local-development tools and stay off unless explicitly enabled
 - PDF export is currently print-to-PDF, not headless server-side PDF rendering
 - calendar export skips synthetic transit/buffer blocks to keep calendars readable
-- `server/planner/diff.ts`
-- `server/planner/types.ts`
 
 ### Translators
 

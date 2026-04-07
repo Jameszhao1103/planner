@@ -15,6 +15,7 @@ const state = {
   assistantProvider: "rules",
   storageMode: "memory",
   mapsBrowserApiKey: null,
+  debugEnabled: false,
   placeSearchSession: null,
   undoStack: [],
   redoStack: [],
@@ -788,6 +789,7 @@ async function loadTrip(nextTripId = state.tripId) {
     state.trip = null;
     state.preview = null;
     state.previewMeta = null;
+    state.debugEnabled = false;
     render();
     return;
   }
@@ -805,6 +807,7 @@ async function loadTrip(nextTripId = state.tripId) {
   state.assistantProvider = payload.workspace.assistant?.provider ?? "rules";
   state.storageMode = payload.workspace.storage?.mode ?? "memory";
   state.mapsBrowserApiKey = payload.workspace.maps?.browser_api_key ?? null;
+  state.debugEnabled = payload.workspace.debug?.enabled ?? false;
   state.selectedDay = isSameTrip
     ? (state.selectedDay ?? payload.workspace.selected_day ?? payload.trip.days[0]?.date ?? null)
     : (payload.workspace.selected_day ?? payload.trip.days[0]?.date ?? null);
@@ -1228,6 +1231,7 @@ function renderTimeline(trip, day, selectedItem) {
 
 function renderAssistant(trip, day, selectedItem) {
   elements.focusEditor.innerHTML = renderFocusedEditor(trip, day, selectedItem);
+  elements.resetButton.classList.toggle("hidden", !state.debugEnabled);
   if (!state.previewMeta) {
     elements.assistantDiff.innerHTML = `
       <div class="diff-summary">No preview yet.</div>

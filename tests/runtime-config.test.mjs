@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  resolveDebugRoutesEnabled,
   resolveMapsBrowserApiKey,
   resolveRuntimeMode,
   resolveCommandPlannerMode,
@@ -37,4 +38,10 @@ test("runtime mode and command planner mode still infer from server env", () => 
     }),
     "openai"
   );
+});
+
+test("debug routes are disabled by default and can be enabled explicitly", () => {
+  assert.equal(resolveDebugRoutesEnabled({}), false);
+  assert.equal(resolveDebugRoutesEnabled({ PLANNER_ENABLE_DEBUG_ROUTES: "1" }), true);
+  assert.equal(resolveDebugRoutesEnabled({ PLANNER_ENABLE_DEBUG_ROUTES: "true" }), true);
 });

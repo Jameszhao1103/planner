@@ -58,10 +58,12 @@ export class PlannerService {
       throw new PlannerError("invalid_command", "Trip end date must be on or after the start date.");
     }
 
+    const timezone = canonicalizeTimeZone(input.timezone || "America/New_York");
+
     const trip = createTripSkeleton({
       tripId: createId("trip"),
       title,
-      timezone: input.timezone || "America/New_York",
+      timezone,
       startDate: input.startDate,
       endDate: input.endDate,
       travelerCount: Math.max(1, Math.min(12, input.travelerCount ?? 2)),
@@ -565,4 +567,17 @@ function summarizeTrip(trip: Itinerary): TripSummary {
     locked_item_count: items.filter((item) => item.locked).length,
     last_updated_at: trip.change_log.at(-1)?.timestamp,
   };
+}
+
+function canonicalizeTimeZone(timezone: string): string {
+  const value = timezone.trim();
+  if (!value) {
+    throw new PlannerError("invalid_command", "Trip timezone cannot be empty.");
+  }
+
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone: value }).resolvedOptions().timeZone;
+  } catch {
+    throw new PlannerError("invalid_command", `Invalid IANA timezone: ${value}.`);
+  }
 }

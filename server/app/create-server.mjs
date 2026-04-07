@@ -9,6 +9,7 @@ import { handleAppRequest, toErrorResponse } from "./app-router.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PUBLIC_DIR = join(__dirname, "../../public");
+const JSON_BODY_LIMIT_BYTES = 1_000_000;
 
 export async function createAppServer() {
   let runtime = await createRuntime();
@@ -124,9 +125,17 @@ async function serveStatic(response, fileName) {
   response.end(content);
 }
 
-async function readJsonBody(request) {
+export async function readJsonBody(request) {
   const chunks = [];
+  let totalBytes = 0;
   for await (const chunk of request) {
+    totalBytes += chunk.length;
+    if (totalBytes > JSON_BODY_LIMIT_BYTES) {
+      throw new PlannerError(
+        "request_too_large",
+        `JSON request body exceeds ${Math.round(JSON_BODY_LIMIT_BYTES / 1000)} KB.`
+      );
+    }
     chunks.push(chunk);
   }
 
@@ -134,7 +143,11 @@ async function readJsonBody(request) {
     return {};
   }
 
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new PlannerError("invalid_request", "Request body must be valid JSON.");
+  }
 }
 
 function writeJson(response, status, payload) {
