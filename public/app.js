@@ -37,6 +37,18 @@ const timelineDrag = {
 };
 
 const initialRouteState = readUrlState();
+const UI_LOCALE = globalThis.navigator?.language || "en-US";
+const BROWSER_TIME_ZONE = resolveBrowserTimeZone();
+const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat(UI_LOCALE, {
+  month: "short",
+  day: "numeric",
+});
+const SHORT_DATE_WITH_YEAR_FORMATTER = new Intl.DateTimeFormat(UI_LOCALE, {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+const NUMBER_FORMATTER = new Intl.NumberFormat(UI_LOCALE);
 
 const TIMELINE_START_HOUR = 8;
 const TIMELINE_TOTAL_MINUTES = 14 * 60;
@@ -52,6 +64,7 @@ const TIMELINE_BOTTOM_PADDING = 10;
 
 const elements = {
   tripTitle: document.querySelector("#tripTitle"),
+  tripTitleKicker: document.querySelector("#tripTitleKicker"),
   tripSubtitle: document.querySelector("#tripSubtitle"),
   tripTitleForm: document.querySelector("#tripTitleForm"),
   tripTitleInput: document.querySelector("#tripTitleInput"),
@@ -121,20 +134,20 @@ elements.editTripTitleButton.addEventListener("click", () => {
 elements.tripBrowserToggleButton.addEventListener("click", () => {
   state.tripBrowserMode = "browse";
   state.tripBrowserOpen = !state.tripBrowserOpen;
-  renderTripBrowser();
+  render();
 });
 
 elements.newTripToggleButton.addEventListener("click", () => {
   state.tripBrowserMode = "create";
   state.tripBrowserOpen = true;
-  renderTripBrowser();
+  render();
   elements.tripCreateTitle.focus();
 });
 
 elements.tripBrowserCloseButton.addEventListener("click", () => {
   state.tripBrowserOpen = false;
   state.tripBrowserMode = "browse";
-  renderTripBrowser();
+  render();
 });
 
 elements.cancelTripTitleButton.addEventListener("click", () => {
@@ -882,7 +895,11 @@ async function executeImmediately(input, options = {}) {
 
 function render() {
   const activeTrip = getActiveTrip();
+  const creating = state.tripBrowserOpen && state.tripBrowserMode === "create";
   if (!activeTrip) {
+    renderHeader(null, creating);
+    renderMeta(null, creating);
+    renderTitleEditor();
     renderTripBrowser();
     return;
   }
@@ -892,13 +909,8 @@ function render() {
   state.selectedItemId = inferDefaultSelectedItemId(activeTrip, state.selectedDay, state.selectedItemId);
   const selectedItem = getSelectedItem(activeTrip, state.selectedDay, state.selectedItemId);
 
-  elements.tripTitle.textContent = activeTrip.title;
-  document.title = activeTrip.title;
-  elements.tripSubtitle.textContent = state.preview
-    ? "Preview mode"
-    : "";
-
-  renderMeta(activeTrip);
+  renderHeader(activeTrip, creating);
+  renderMeta(activeTrip, creating);
   renderTitleEditor();
   renderTripBrowser();
   renderDayTabs(activeTrip);
@@ -912,24 +924,54 @@ function render() {
   syncUrlState();
 }
 
+function renderHeader(trip, creating) {
+  if (creating) {
+    state.titleEditing = false;
+    elements.tripTitleKicker.textContent = "Planning setup";
+    elements.tripTitle.textContent = "Create a New Trip";
+    elements.tripSubtitle.textContent = "Set dates, timezone, and travelers before opening a new workspace.";
+    document.title = "Create a New Trip";
+    return;
+  }
+
+  if (!trip) {
+    elements.tripTitleKicker.textContent = "AI-assisted itinerary editor";
+    elements.tripTitle.textContent = "Trip Workspace";
+    elements.tripSubtitle.textContent = "Open a saved itinerary or start a new draft.";
+    document.title = "Trip Workspace";
+    return;
+  }
+
+  elements.tripTitleKicker.textContent = "AI-assisted itinerary editor";
+  elements.tripTitle.textContent = trip.title;
+  elements.tripSubtitle.textContent = state.preview ? "Preview mode" : "";
+  document.title = trip.title;
+}
+
 function renderTitleEditor() {
   const activeTrip = getActiveTrip();
-  const isEditing = state.titleEditing && Boolean(activeTrip);
+  const creating = state.tripBrowserOpen && state.tripBrowserMode === "create";
+  const isEditing = !creating && state.titleEditing && Boolean(activeTrip);
   elements.tripTitle.classList.toggle("hidden", isEditing);
-  elements.editTripTitleButton.classList.toggle("hidden", isEditing);
+  elements.editTripTitleButton.classList.toggle("hidden", isEditing || creating || !activeTrip);
   elements.tripTitleForm.classList.toggle("hidden", !isEditing);
   if (isEditing && activeTrip) {
     elements.tripTitleInput.value = activeTrip.title;
   }
 }
 
-function renderMeta(trip) {
+function renderMeta(trip, creating = false) {
+  if (!trip || creating) {
+    elements.metaPills.innerHTML = "";
+    return;
+  }
+
   const items = trip.days.flatMap((day) => day.items);
   elements.metaPills.innerHTML = [
-    pill(`${trip.start_date} to ${trip.end_date}`),
-    pill(`${trip.travelers?.length ?? 0} travelers`),
-    pill(`${items.filter((item) => item.locked).length} locked items`),
-    pill(`${trip.conflicts.length} conflict${trip.conflicts.length === 1 ? "" : "s"}`),
+    pill(formatDateRange(trip.start_date, trip.end_date)),
+    pill(formatCountLabel(trip.travelers?.length ?? 0, "traveler")),
+    pill(formatCountLabel(items.filter((item) => item.locked).length, "locked stop", "locked stops")),
+    pill(formatCountLabel(trip.conflicts.length, "conflict")),
     state.preview ? pill("Preview active") : "",
   ].join("");
 }
@@ -937,17 +979,19 @@ function renderMeta(trip) {
 function renderTripBrowser() {
   const creating = state.tripBrowserOpen && state.tripBrowserMode === "create";
   elements.tripBrowser.classList.toggle("hidden", !state.tripBrowserOpen);
+  elements.tripBrowser.classList.toggle("creating", creating);
   elements.grid.classList.toggle("hidden", creating);
   elements.globalDaySwitcher.classList.toggle("hidden", creating);
   elements.metaPills.classList.toggle("hidden", creating);
   elements.tripBrowserToggleButton.classList.toggle("button-primary", state.tripBrowserOpen && state.tripBrowserMode === "browse");
   elements.newTripToggleButton.classList.toggle("button-primary", creating);
+  elements.tripBrowserCloseButton.textContent = creating ? "Back to trips" : "Close";
   elements.tripList.innerHTML = state.tripList.length
     ? state.tripList
       .map((trip) => `
         <button type="button" class="trip-list-item${trip.trip_id === state.tripId ? " active" : ""}" data-trip-id="${escapeHtml(trip.trip_id)}">
           <strong>${escapeHtml(trip.title)}</strong>
-          <small>${escapeHtml(trip.start_date)} to ${escapeHtml(trip.end_date)} · ${trip.day_count} day${trip.day_count === 1 ? "" : "s"}</small>
+          <small>${escapeHtml(formatDateRange(trip.start_date, trip.end_date))} · ${escapeHtml(formatCountLabel(trip.day_count, "day"))}</small>
         </button>
       `)
       .join("")
@@ -1594,7 +1638,8 @@ function seedTripCreateForm() {
   elements.tripCreateTitle.value = "";
   elements.tripCreateStartDate.value = startDate;
   elements.tripCreateEndDate.value = endDate;
-  elements.tripCreateTimezone.value = "America/New_York";
+  ensureTimeZoneOption(BROWSER_TIME_ZONE);
+  elements.tripCreateTimezone.value = BROWSER_TIME_ZONE;
   elements.tripCreateTravelers.value = "2";
 }
 
@@ -1629,6 +1674,64 @@ function summarizeTripForList(trip) {
     locked_item_count: items.filter((item) => item.locked).length,
     last_updated_at: trip.change_log?.at(-1)?.timestamp ?? null,
   };
+}
+
+function resolveBrowserTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York";
+  } catch {
+    return "America/New_York";
+  }
+}
+
+function ensureTimeZoneOption(timezone) {
+  if (!timezone || !elements.tripCreateTimezone) {
+    return;
+  }
+
+  if ([...elements.tripCreateTimezone.options].some((option) => option.value === timezone)) {
+    return;
+  }
+
+  const option = document.createElement("option");
+  option.value = timezone;
+  option.textContent = timezone;
+  elements.tripCreateTimezone.append(option);
+}
+
+function formatDateRange(startDate, endDate) {
+  if (!startDate || !endDate) {
+    return [startDate, endDate].filter(Boolean).join(" – ");
+  }
+
+  const start = toDateValue(startDate);
+  const end = toDateValue(endDate);
+  if (!start || !end) {
+    return `${startDate} – ${endDate}`;
+  }
+
+  const includeYear = start.getUTCFullYear() !== end.getUTCFullYear();
+  const formatter = includeYear ? SHORT_DATE_WITH_YEAR_FORMATTER : SHORT_DATE_FORMATTER;
+  if (typeof formatter.formatRange === "function") {
+    return formatter.formatRange(start, end);
+  }
+
+  return `${formatter.format(start)} – ${formatter.format(end)}`;
+}
+
+function formatCountLabel(value, singular, plural = `${singular}s`) {
+  const count = Number.isFinite(value) ? value : 0;
+  const label = count === 1 ? singular : plural;
+  return `${NUMBER_FORMATTER.format(count)} ${label}`;
+}
+
+function toDateValue(date) {
+  if (!date) {
+    return null;
+  }
+
+  const parsed = new Date(`${date}T12:00:00Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function getAdjacentItem(trip, dayDate, itemId, direction) {

@@ -17,7 +17,7 @@
           <div class="meta" id="metaPills"></div>
         </div>
         <div class="title">
-          <div class="title-kicker">AI-assisted itinerary editor</div>
+          <div class="title-kicker" id="tripTitleKicker">AI-assisted itinerary editor</div>
           <div class="title-row">
             <h1 id="tripTitle">Asheville Long Weekend</h1>
             <button
@@ -46,7 +46,7 @@
       </section>
 
       <section class="trip-browser hidden" id="tripBrowser">
-        <div class="trip-browser-column">
+        <div class="trip-browser-column trip-browser-list-column">
           <div class="panel-kicker">Trips</div>
           <div class="trip-browser-heading">
             <h2>Your itineraries</h2>
@@ -54,11 +54,11 @@
           </div>
           <div class="trip-list" id="tripList"></div>
         </div>
-        <div class="trip-browser-column">
+        <div class="trip-browser-column trip-browser-create-column">
           <div class="panel-kicker">Create Trip</div>
           <div class="trip-browser-heading">
             <h2>Start a new trip</h2>
-            <p>Create a fresh workspace, then let the planner fill in the details.</p>
+            <p>Set the basics first. Then open a clean workspace and start shaping the itinerary.</p>
           </div>
           <form class="trip-create-form" id="tripCreateForm">
             <label>
@@ -78,7 +78,16 @@
             <div class="trip-create-grid">
               <label>
                 <span>Timezone</span>
-                <input type="text" id="tripCreateTimezone" name="timezone" value="America/New_York" autocomplete="off" required>
+                <select id="tripCreateTimezone" name="timezone" autocomplete="off" required>
+                  <option value="America/New_York">US East</option>
+                  <option value="America/Chicago">US Central</option>
+                  <option value="America/Denver">US Mountain</option>
+                  <option value="America/Los_Angeles">US Pacific</option>
+                  <option value="Europe/London">London</option>
+                  <option value="Europe/Paris">Paris</option>
+                  <option value="Asia/Tokyo">Tokyo</option>
+                  <option value="Asia/Shanghai">Shanghai</option>
+                </select>
               </label>
               <label>
                 <span>Travelers</span>
@@ -177,7 +186,7 @@
                     id="assistantInput"
                     name="assistant_request"
                     class="chat-input"
-                    placeholder="Try: 把当前这天的晚餐换成评分高一点的美式餐厅…"
+                    placeholder="Try: replace tonight’s dinner with a top-rated American restaurant…"
                   ></textarea>
                   <div class="assistant-toolbar">
                     <button type="submit" class="button button-primary">Preview</button>
