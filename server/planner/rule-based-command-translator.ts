@@ -1,5 +1,6 @@
 import { PlannerError } from "./errors.ts";
 import { createId } from "./ids.ts";
+import { addMinutesToIso } from "./time.ts";
 import type { Itinerary, PlannerCommand, PlannerCommandTranslator } from "./types.ts";
 
 export class RuleBasedCommandTranslator implements PlannerCommandTranslator {
@@ -10,6 +11,107 @@ export class RuleBasedCommandTranslator implements PlannerCommandTranslator {
   }): Promise<PlannerCommand[]> {
     const lower = input.utterance.toLowerCase();
     const day = inferTargetDay(input.trip, lower, input.context?.selected_day);
+    const selectedItem = input.context?.selected_item_id
+      ? input.trip.days.flatMap((candidate) => candidate.items).find((item) => item.id === input.context?.selected_item_id)
+      : undefined;
+
+    if (matchesAny(lower, ["delete", "remove", "删掉", "删除"]) && matchesAny(lower, ["stop", "item", "place", "activity", "这项", "这个地点", "this stop", "selected"])) {
+      if (!selectedItem) {
+        throw new PlannerError("invalid_command", "Select a stop before asking to remove it.");
+      }
+
+      return [
+        {
+          command_id: createId("cmd"),
+          action: "delete_item",
+          item_id: selectedItem.id,
+          day_date: day.date,
+          reason: input.utterance,
+        },
+      ];
+    }
+
+    if (matchesAny(lower, ["add day", "extend trip", "加一天", "多一天"])) {
+      return [
+        {
+          command_id: createId("cmd"),
+          action: "add_day",
+          day_date: day.date,
+          reason: input.utterance,
+        },
+      ];
+    }
+
+    if (matchesAny(lower, ["delete day", "remove day", "删掉这一天", "删除这一天"])) {
+      return [
+        {
+          command_id: createId("cmd"),
+          action: "delete_day",
+          day_date: day.date,
+          reason: input.utterance,
+        },
+      ];
+    }
+
+    if (matchesAny(lower, ["lock", "锁定"]) && matchesAny(lower, ["this", "selected", "stop", "item", "当前", "这个"])) {
+      if (!selectedItem) {
+        throw new PlannerError("invalid_command", "Select a stop before asking to lock it.");
+      }
+
+      return [
+        {
+          command_id: createId("cmd"),
+          action: "lock_item",
+          item_id: selectedItem.id,
+          day_date: day.date,
+          reason: input.utterance,
+        },
+      ];
+    }
+
+    if (matchesAny(lower, ["unlock", "解锁"]) && matchesAny(lower, ["this", "selected", "stop", "item", "当前", "这个"])) {
+      if (!selectedItem) {
+        throw new PlannerError("invalid_command", "Select a stop before asking to unlock it.");
+      }
+
+      return [
+        {
+          command_id: createId("cmd"),
+          action: "unlock_item",
+          item_id: selectedItem.id,
+          day_date: day.date,
+          reason: input.utterance,
+        },
+      ];
+    }
+
+    if (selectedItem && matchesAny(lower, ["later", "延后", "往后", "晚一点", "后移"])) {
+      return [
+        {
+          command_id: createId("cmd"),
+          action: "move_item",
+          item_id: selectedItem.id,
+          day_date: day.date,
+          reason: input.utterance,
+          new_start_at: addMinutesToIso(selectedItem.start_at, 30),
+          new_end_at: addMinutesToIso(selectedItem.end_at, 30),
+        },
+      ];
+    }
+
+    if (selectedItem && matchesAny(lower, ["earlier", "提前", "往前", "早一点", "前移"])) {
+      return [
+        {
+          command_id: createId("cmd"),
+          action: "move_item",
+          item_id: selectedItem.id,
+          day_date: day.date,
+          reason: input.utterance,
+          new_start_at: addMinutesToIso(selectedItem.start_at, -30),
+          new_end_at: addMinutesToIso(selectedItem.end_at, -30),
+        },
+      ];
+    }
 
     if (matchesAny(lower, ["replace", "swap", "换", "替换"]) && matchesAny(lower, ["dinner", "晚餐"])) {
       const dinner = findMeal(input.trip, day.date, "dinner");

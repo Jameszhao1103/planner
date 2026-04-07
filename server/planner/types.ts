@@ -133,6 +133,19 @@ export type MarkdownSection = {
   generated_at?: string;
 };
 
+export type TripSummary = {
+  trip_id: string;
+  title: string;
+  timezone: string;
+  start_date: string;
+  end_date: string;
+  traveler_count: number;
+  day_count: number;
+  conflict_count: number;
+  locked_item_count: number;
+  last_updated_at?: string;
+};
+
 export type ChangeLogEntry = {
   id: string;
   timestamp: string;
@@ -163,8 +176,11 @@ export type PlannerCommandAction =
   | "unlock_item"
   | "move_item"
   | "reorder_item"
+  | "add_day"
+  | "delete_day"
   | "replace_place"
   | "insert_item"
+  | "restore_item"
   | "delete_item"
   | "set_transport_mode"
   | "optimize_day"
@@ -233,6 +249,14 @@ export type PlannerRenameTripRequest = {
   title: string;
 };
 
+export type PlannerCreateTripRequest = {
+  title: string;
+  startDate: string;
+  endDate: string;
+  timezone: string;
+  travelerCount?: number;
+};
+
 export type PlannerRejectPreviewRequest = {
   tripId: string;
   previewId: string;
@@ -290,6 +314,11 @@ export type PlannerExecuteResponse = {
 };
 
 export type PlannerRenameTripResponse = {
+  trip: Itinerary;
+  summary: string;
+};
+
+export type PlannerCreateTripResponse = {
   trip: Itinerary;
   summary: string;
 };

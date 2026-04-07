@@ -1,8 +1,9 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Itinerary, PlannerPreview } from "./types.ts";
 
 export interface TripRepository {
+  listTrips(): Promise<Itinerary[]>;
   getTripById(tripId: string): Promise<Itinerary | null>;
   saveTrip(trip: Itinerary): Promise<Itinerary>;
 }
@@ -20,6 +21,12 @@ export class InMemoryTripRepository implements TripRepository {
     seedTrips.forEach((trip) => {
       this.trips.set(trip.trip_id, structuredClone(trip));
     });
+  }
+
+  async listTrips(): Promise<Itinerary[]> {
+    return Array.from(this.trips.values())
+      .map((trip) => structuredClone(trip))
+      .sort((left, right) => left.start_date.localeCompare(right.start_date));
   }
 
   async getTripById(tripId: string): Promise<Itinerary | null> {
@@ -56,6 +63,21 @@ export class FileTripRepository implements TripRepository {
 
   constructor(rootDir: string) {
     this.rootDir = rootDir;
+  }
+
+  async listTrips(): Promise<Itinerary[]> {
+    await mkdir(this.rootDir, { recursive: true });
+    const entries = await readdir(this.rootDir, { withFileTypes: true });
+    const trips = await Promise.all(
+      entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+        .map(async (entry) => {
+          const raw = await readFile(join(this.rootDir, entry.name), "utf8");
+          return JSON.parse(raw) as Itinerary;
+        })
+    );
+
+    return trips.sort((left, right) => left.start_date.localeCompare(right.start_date));
   }
 
   async getTripById(tripId: string): Promise<Itinerary | null> {

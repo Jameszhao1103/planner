@@ -5,6 +5,39 @@ export async function handleAppRequest(runtime, request) {
   const url = new URL(request.url, "http://localhost");
   const pathname = url.pathname;
 
+  if (request.method === "GET" && pathname === "/api/trips") {
+    const trips = await runtime.plannerService.listTrips();
+    return json(200, {
+      ok: true,
+      data: {
+        trips,
+      },
+      meta: {
+        request_id: randomUUID(),
+      },
+    });
+  }
+
+  if (request.method === "POST" && pathname === "/api/trips") {
+    const result = await runtime.plannerService.createTrip({
+      title: request.body.title,
+      startDate: request.body.start_date,
+      endDate: request.body.end_date,
+      timezone: request.body.timezone,
+      travelerCount: request.body.traveler_count,
+    });
+
+    return json(201, {
+      ok: true,
+      data: result,
+      meta: {
+        request_id: randomUUID(),
+        trip_id: result.trip.trip_id,
+        version: result.trip.version,
+      },
+    });
+  }
+
   if (request.method === "GET" && pathname.startsWith("/api/trips/")) {
     const tripId = pathname.split("/")[3];
     const trip = await runtime.tripRepository.getTripById(tripId);

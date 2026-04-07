@@ -18,7 +18,11 @@ export class FallbackCommandTranslator implements PlannerCommandTranslator {
     try {
       return await this.primary.translate(input);
     } catch (error) {
-      if (error instanceof PlannerError && error.code !== "translator_unavailable") {
+      if (
+        error instanceof PlannerError &&
+        error.code !== "translator_unavailable" &&
+        error.code !== "invalid_command"
+      ) {
         throw error;
       }
 

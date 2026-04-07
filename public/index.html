@@ -9,6 +9,13 @@
   <body>
     <main class="shell">
       <section class="header">
+        <div class="header-topbar">
+          <div class="header-actions">
+            <button type="button" class="button button-small" id="tripBrowserToggleButton">Trips</button>
+            <button type="button" class="button button-small button-primary" id="newTripToggleButton">New Trip</button>
+          </div>
+          <div class="meta" id="metaPills"></div>
+        </div>
         <div class="title">
           <div class="title-kicker">AI-assisted itinerary editor</div>
           <div class="title-row">
@@ -28,10 +35,61 @@
           </form>
           <p id="tripSubtitle"></p>
         </div>
-        <div class="meta" id="metaPills"></div>
         <div class="global-day-switcher">
           <div class="switcher-label">Global Day View</div>
           <div class="day-tabs" id="dayTabs"></div>
+          <div class="day-actions">
+            <button type="button" class="button button-small" id="addDayButton">Add Day</button>
+            <button type="button" class="button button-small" id="removeDayButton">Remove Day</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="trip-browser hidden" id="tripBrowser">
+        <div class="trip-browser-column">
+          <div class="panel-kicker">Trips</div>
+          <div class="trip-browser-heading">
+            <h2>Your itineraries</h2>
+            <p>Switch between saved trips or start a new draft.</p>
+          </div>
+          <div class="trip-list" id="tripList"></div>
+        </div>
+        <div class="trip-browser-column">
+          <div class="panel-kicker">Create Trip</div>
+          <div class="trip-browser-heading">
+            <h2>Start a new trip</h2>
+            <p>Create a fresh workspace, then let the planner fill in the details.</p>
+          </div>
+          <form class="trip-create-form" id="tripCreateForm">
+            <label>
+              <span>Trip title</span>
+              <input type="text" id="tripCreateTitle" name="title" maxlength="120" placeholder="Tokyo Spring Weekender…" autocomplete="off" required>
+            </label>
+            <div class="trip-create-grid">
+              <label>
+                <span>Start date</span>
+                <input type="date" id="tripCreateStartDate" name="start_date" required>
+              </label>
+              <label>
+                <span>End date</span>
+                <input type="date" id="tripCreateEndDate" name="end_date" required>
+              </label>
+            </div>
+            <div class="trip-create-grid">
+              <label>
+                <span>Timezone</span>
+                <input type="text" id="tripCreateTimezone" name="timezone" value="America/New_York" autocomplete="off" required>
+              </label>
+              <label>
+                <span>Travelers</span>
+                <input type="number" id="tripCreateTravelers" name="traveler_count" min="1" max="12" value="2" required>
+              </label>
+            </div>
+            <div class="trip-create-toolbar">
+              <button type="submit" class="button button-primary">Create Trip</button>
+              <button type="button" class="button" id="tripBrowserCloseButton">Close</button>
+            </div>
+          </form>
         </div>
       </section>
 

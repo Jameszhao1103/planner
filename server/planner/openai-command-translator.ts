@@ -13,6 +13,8 @@ const COMMAND_ACTIONS: PlannerCommandAction[] = [
   "unlock_item",
   "move_item",
   "reorder_item",
+  "add_day",
+  "delete_day",
   "replace_place",
   "insert_item",
   "delete_item",
@@ -137,6 +139,8 @@ const SYSTEM_PROMPT = [
   "If the user references a weekday or relative day that does not exactly match the itinerary dates, prefer the itinerary item/day that best matches the named stop instead of inventing a new date.",
   "For meal replacement, include local context in place_query such as the neighborhood or city when it is obvious from the current stop.",
   "Use lock_item and unlock_item for locking changes.",
+  "Use add_day and delete_day for trip length changes.",
+  "Use delete_item when the user wants to remove a stop.",
   "Use fill_meal to add a meal, optimize_day/relax_day/compress_day for day-level changes, and set_transport_mode for route mode changes.",
   "Do not invent unsupported actions. Do not explain your reasoning. Respond with JSON only.",
 ].join(" ");

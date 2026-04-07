@@ -1,6 +1,6 @@
-const tripId = "trip_asheville_001";
-
 const state = {
+  tripId: null,
+  tripList: [],
   trip: null,
   preview: null,
   previewMeta: null,
@@ -16,8 +16,11 @@ const state = {
   storageMode: "memory",
   mapsBrowserApiKey: null,
   placeSearchSession: null,
-  undoAction: null,
+  undoStack: [],
+  redoStack: [],
   titleEditing: false,
+  tripBrowserOpen: false,
+  tripBrowserMode: "browse",
 };
 
 const mapRuntime = {
@@ -55,7 +58,22 @@ const elements = {
   editTripTitleButton: document.querySelector("#editTripTitleButton"),
   cancelTripTitleButton: document.querySelector("#cancelTripTitleButton"),
   metaPills: document.querySelector("#metaPills"),
+  grid: document.querySelector(".grid"),
+  globalDaySwitcher: document.querySelector(".global-day-switcher"),
+  tripBrowser: document.querySelector("#tripBrowser"),
+  tripBrowserToggleButton: document.querySelector("#tripBrowserToggleButton"),
+  newTripToggleButton: document.querySelector("#newTripToggleButton"),
+  tripBrowserCloseButton: document.querySelector("#tripBrowserCloseButton"),
+  tripList: document.querySelector("#tripList"),
+  tripCreateForm: document.querySelector("#tripCreateForm"),
+  tripCreateTitle: document.querySelector("#tripCreateTitle"),
+  tripCreateStartDate: document.querySelector("#tripCreateStartDate"),
+  tripCreateEndDate: document.querySelector("#tripCreateEndDate"),
+  tripCreateTimezone: document.querySelector("#tripCreateTimezone"),
+  tripCreateTravelers: document.querySelector("#tripCreateTravelers"),
   dayTabs: document.querySelector("#dayTabs"),
+  addDayButton: document.querySelector("#addDayButton"),
+  removeDayButton: document.querySelector("#removeDayButton"),
   mapCanvas: document.querySelector("#mapCanvas"),
   mapStatus: document.querySelector("#mapStatus"),
   planPanel: document.querySelector("#planPanel"),
@@ -78,6 +96,7 @@ const elements = {
   quickActions: document.querySelectorAll("[data-quick-action]"),
 };
 
+state.tripId = initialRouteState.tripId;
 state.selectedDay = initialRouteState.selectedDay;
 state.selectedItemId = initialRouteState.selectedItemId;
 state.scheduleTab = initialRouteState.scheduleTab;
@@ -99,6 +118,25 @@ elements.editTripTitleButton.addEventListener("click", () => {
   elements.tripTitleInput.select();
 });
 
+elements.tripBrowserToggleButton.addEventListener("click", () => {
+  state.tripBrowserMode = "browse";
+  state.tripBrowserOpen = !state.tripBrowserOpen;
+  renderTripBrowser();
+});
+
+elements.newTripToggleButton.addEventListener("click", () => {
+  state.tripBrowserMode = "create";
+  state.tripBrowserOpen = true;
+  renderTripBrowser();
+  elements.tripCreateTitle.focus();
+});
+
+elements.tripBrowserCloseButton.addEventListener("click", () => {
+  state.tripBrowserOpen = false;
+  state.tripBrowserMode = "browse";
+  renderTripBrowser();
+});
+
 elements.cancelTripTitleButton.addEventListener("click", () => {
   state.titleEditing = false;
   renderTitleEditor();
@@ -117,7 +155,7 @@ elements.tripTitleForm.addEventListener("submit", async (event) => {
 
   setPending(true, "Renaming trip…");
   try {
-    const payload = await requestJson(`/api/trips/${tripId}/rename`, {
+    const payload = await requestJson(`/api/trips/${requireTripId()}/rename`, {
       method: "POST",
       body: {
         base_version: state.trip.version,
@@ -126,6 +164,7 @@ elements.tripTitleForm.addEventListener("submit", async (event) => {
     });
 
     state.trip = payload.trip;
+    syncTripListEntry(payload.trip);
     state.preview = null;
     state.previewMeta = null;
     state.titleEditing = false;
@@ -134,6 +173,63 @@ elements.tripTitleForm.addEventListener("submit", async (event) => {
   } catch (error) {
     setPending(false, error.message, "error");
   }
+});
+
+elements.tripCreateForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const formData = new FormData(elements.tripCreateForm);
+  const title = String(formData.get("title") ?? "").trim();
+  const startDate = String(formData.get("start_date") ?? "").trim();
+  const endDate = String(formData.get("end_date") ?? "").trim();
+  const timezone = String(formData.get("timezone") ?? "").trim();
+  const travelerCount = Number.parseInt(String(formData.get("traveler_count") ?? "2"), 10);
+
+  if (!title || !startDate || !endDate || !timezone) {
+    return;
+  }
+
+  setPending(true, "Creating trip…");
+  try {
+    const payload = await requestJson("/api/trips", {
+      method: "POST",
+      body: {
+        title,
+        start_date: startDate,
+        end_date: endDate,
+        timezone,
+        traveler_count: travelerCount,
+      },
+    });
+
+    state.tripId = payload.trip.trip_id;
+    state.tripBrowserOpen = false;
+    state.tripBrowserMode = "browse";
+    elements.tripCreateForm.reset();
+    seedTripCreateForm();
+    elements.tripCreateTimezone.value = timezone;
+    elements.tripCreateTravelers.value = String(travelerCount);
+    await loadTrips();
+    await loadTrip(state.tripId);
+    setPending(false, payload.summary ?? "Trip created.");
+  } catch (error) {
+    setPending(false, error.message, "error");
+  }
+});
+
+elements.tripList.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-trip-id]");
+  if (!button) {
+    return;
+  }
+
+  const nextTripId = button.dataset.tripId;
+  if (!nextTripId || nextTripId === state.tripId) {
+    return;
+  }
+
+  state.tripBrowserOpen = false;
+  state.tripBrowserMode = "browse";
+  await loadTrip(nextTripId);
 });
 
 elements.assistantForm.addEventListener("submit", async (event) => {
@@ -155,7 +251,7 @@ elements.applyButton.addEventListener("click", async () => {
 
   setPending(true, "Applying preview…");
   try {
-    const payload = await requestJson(`/api/trips/${tripId}/commands/apply`, {
+    const payload = await requestJson(`/api/trips/${requireTripId()}/commands/apply`, {
       method: "POST",
       body: {
         base_version: state.trip.version,
@@ -164,11 +260,12 @@ elements.applyButton.addEventListener("click", async () => {
     });
 
     state.trip = payload.trip;
+    syncTripListEntry(payload.trip);
     state.preview = null;
     state.previewMeta = null;
     state.selectedDay = state.selectedDay ?? state.trip.days[0]?.date ?? null;
     clearPlaceSearchSession();
-    clearUndoAction();
+    clearHistory();
     elements.assistantInput.value = "";
     render();
     setPending(false, "Preview applied.");
@@ -184,7 +281,7 @@ elements.rejectButton.addEventListener("click", async () => {
 
   setPending(true, "Rejecting preview…");
   try {
-    await requestJson(`/api/trips/${tripId}/commands/reject`, {
+    await requestJson(`/api/trips/${requireTripId()}/commands/reject`, {
       method: "POST",
       body: {
         preview_id: state.previewMeta.preview_id,
@@ -194,7 +291,7 @@ elements.rejectButton.addEventListener("click", async () => {
     state.preview = null;
     state.previewMeta = null;
     clearPlaceSearchSession();
-    clearUndoAction();
+    clearHistory();
     render();
     setPending(false, "Preview discarded.");
   } catch (error) {
@@ -209,12 +306,60 @@ elements.resetButton.addEventListener("click", async () => {
       method: "POST",
       body: {},
     });
-    await loadTrip();
+    await loadTrips();
+    await loadTrip(state.tripId);
     elements.assistantInput.value = "";
     setPending(false, "Sample trip reset.");
   } catch (error) {
     setPending(false, error.message, "error");
   }
+});
+
+elements.addDayButton.addEventListener("click", async () => {
+  if (!state.trip) {
+    return;
+  }
+
+  const nextDayDate = addDaysToDate(state.trip.end_date, 1);
+  await executeImmediately({
+    commands: [
+      {
+        command_id: `cmd_add_day_${Date.now()}`,
+        action: "add_day",
+        day_date: nextDayDate,
+        reason: "Append a new trip day",
+        payload: {
+          date: nextDayDate,
+        },
+      },
+    ],
+  }, {
+    pendingMessage: "Adding day…",
+    successMessage: "Day added.",
+    workspaceTab: "selection",
+    selectDay: nextDayDate,
+  });
+});
+
+elements.removeDayButton.addEventListener("click", async () => {
+  if (!state.trip || !state.selectedDay) {
+    return;
+  }
+
+  await executeImmediately({
+    commands: [
+      {
+        command_id: `cmd_remove_day_${Date.now()}`,
+        action: "delete_day",
+        day_date: state.selectedDay,
+        reason: "Remove current day",
+      },
+    ],
+  }, {
+    pendingMessage: "Removing day…",
+    successMessage: "Day removed.",
+    workspaceTab: "selection",
+  });
 });
 
 elements.quickActions.forEach((button) => {
@@ -272,7 +417,7 @@ elements.exportCalendarButton.addEventListener("click", () => {
     return;
   }
 
-  triggerDownload(`/api/trips/${tripId}/export/ics?day=${encodeURIComponent(state.selectedDay)}`);
+  triggerDownload(`/api/trips/${requireTripId()}/export/ics?day=${encodeURIComponent(state.selectedDay)}`);
 });
 
 elements.exportPdfButton.addEventListener("click", () => {
@@ -280,7 +425,7 @@ elements.exportPdfButton.addEventListener("click", () => {
     return;
   }
 
-  window.open(`/trips/${tripId}/print?day=${encodeURIComponent(state.selectedDay)}`, "_blank", "noopener");
+  window.open(`/trips/${requireTripId()}/print?day=${encodeURIComponent(state.selectedDay)}`, "_blank", "noopener");
 });
 
 elements.workspaceNotice.addEventListener("click", async (event) => {
@@ -289,19 +434,13 @@ elements.workspaceNotice.addEventListener("click", async (event) => {
     return;
   }
 
-  if (actionTarget.dataset.workspaceAction === "undo" && state.undoAction?.commands?.length) {
-    await executeImmediately(
-      {
-        commands: state.undoAction.commands,
-      },
-      {
-        pendingMessage: "Undoing last edit…",
-        successMessage: "Undo applied.",
-        clearSearch: false,
-      }
-    );
-    state.undoAction = null;
-    renderWorkspaceNotice();
+  if (actionTarget.dataset.workspaceAction === "undo") {
+    await replayHistory("undo");
+    return;
+  }
+
+  if (actionTarget.dataset.workspaceAction === "redo") {
+    await replayHistory("redo");
   }
 });
 
@@ -360,6 +499,26 @@ elements.focusEditor.addEventListener("click", async (event) => {
       pendingMessage: selectedItem.locked ? "Unlocking item…" : "Locking item…",
       successMessage: selectedItem.locked ? "Item unlocked." : "Item locked.",
       workspaceTab: "selection",
+    });
+    return;
+  }
+
+  if (action === "delete-item") {
+    await executeImmediately({
+      commands: [
+        {
+          command_id: `cmd_delete_${Date.now()}`,
+          action: "delete_item",
+          item_id: selectedItem.id,
+          day_date: state.selectedDay,
+          reason: `Delete ${selectedItem.title}`,
+        },
+      ],
+    }, {
+      pendingMessage: "Deleting stop…",
+      successMessage: "Stop deleted.",
+      workspaceTab: "selection",
+      keepSelection: false,
     });
     return;
   }
@@ -585,22 +744,63 @@ elements.focusEditor.addEventListener("submit", async (event) => {
 });
 
 async function bootstrap() {
-  await loadTrip();
+  seedTripCreateForm();
+  await loadTrips();
+  if (state.tripId) {
+    await loadTrip(state.tripId);
+    return;
+  }
+
+  if (state.tripList[0]?.trip_id) {
+    await loadTrip(state.tripList[0].trip_id);
+    return;
+  }
+
+  state.tripBrowserOpen = true;
+  renderTripBrowser();
+  setPending(false, "Create your first trip to get started.");
 }
 
-async function loadTrip() {
+async function loadTrips() {
+  const payload = await requestJson("/api/trips");
+  state.tripList = payload.trips ?? [];
+  if (!state.tripId || !state.tripList.some((trip) => trip.trip_id === state.tripId)) {
+    state.tripId = state.tripList[0]?.trip_id ?? null;
+  }
+  renderTripBrowser();
+}
+
+async function loadTrip(nextTripId = state.tripId) {
+  if (!nextTripId) {
+    state.trip = null;
+    state.preview = null;
+    state.previewMeta = null;
+    render();
+    return;
+  }
+
   setPending(true, "Loading trip…");
-  const payload = await requestJson(`/api/trips/${tripId}`);
+  const payload = await requestJson(`/api/trips/${nextTripId}`);
+  const isSameTrip = state.tripId === nextTripId;
+  state.tripId = nextTripId;
   state.trip = payload.trip;
+  syncTripListEntry(payload.trip);
   state.preview = null;
   state.previewMeta = null;
-  state.undoAction = null;
+  clearHistory();
   state.provider = payload.workspace.provider ?? "mock";
   state.assistantProvider = payload.workspace.assistant?.provider ?? "rules";
   state.storageMode = payload.workspace.storage?.mode ?? "memory";
   state.mapsBrowserApiKey = payload.workspace.maps?.browser_api_key ?? null;
-  state.selectedDay = state.selectedDay ?? payload.workspace.selected_day ?? payload.trip.days[0]?.date ?? null;
-  state.selectedItemId = inferDefaultSelectedItemId(payload.trip, state.selectedDay, state.selectedItemId);
+  state.selectedDay = isSameTrip
+    ? (state.selectedDay ?? payload.workspace.selected_day ?? payload.trip.days[0]?.date ?? null)
+    : (payload.workspace.selected_day ?? payload.trip.days[0]?.date ?? null);
+  state.selectedItemId = inferDefaultSelectedItemId(payload.trip, state.selectedDay, null);
+  state.workspaceTab = "selection";
+  state.scheduleTab = state.scheduleTab || "timeline";
+  state.tripBrowserOpen = false;
+  state.tripBrowserMode = "browse";
+  state.titleEditing = false;
   clearPlaceSearchSession();
   render();
   setPending(false, "Trip loaded.");
@@ -609,12 +809,12 @@ async function loadTrip() {
 async function previewWithInput(input) {
   setPending(true, "Previewing change…");
   try {
-    clearUndoAction();
+    clearHistory();
     const context = {
       selected_day: input.context?.selected_day ?? state.selectedDay ?? undefined,
       selected_item_id: input.context?.selected_item_id ?? state.selectedItemId ?? undefined,
     };
-    const payload = await requestJson(`/api/trips/${tripId}/commands/preview`, {
+    const payload = await requestJson(`/api/trips/${requireTripId()}/commands/preview`, {
       method: "POST",
       body: {
         base_version: state.trip.version,
@@ -632,15 +832,14 @@ async function previewWithInput(input) {
     render();
     setPending(false, "Preview ready.");
   } catch (error) {
-    setPending(false, error.message, "error");
+    setPending(false, normalizeAssistantError(error), "error");
   }
 }
 
 async function executeImmediately(input, options = {}) {
   setPending(true, options.pendingMessage ?? "Saving change…");
   try {
-    clearUndoAction();
-    const payload = await requestJson(`/api/trips/${tripId}/commands/execute`, {
+    const payload = await requestJson(`/api/trips/${requireTripId()}/commands/execute`, {
       method: "POST",
       body: {
         base_version: state.trip.version,
@@ -651,16 +850,27 @@ async function executeImmediately(input, options = {}) {
     });
 
     state.trip = payload.trip;
+    syncTripListEntry(payload.trip);
     state.preview = null;
     state.previewMeta = null;
     if (options.clearSearch !== false) {
       clearPlaceSearchSession();
     }
+    if (options.keepSelection === false) {
+      state.selectedItemId = null;
+    }
+    if (options.selectDay) {
+      state.selectedDay = options.selectDay;
+    }
     if (payload.undo_commands?.length) {
-      state.undoAction = {
+      state.undoStack.push({
         commands: payload.undo_commands,
         summary: options.undoSummary ?? payload.summary ?? "Undo last edit",
-      };
+      });
+      if (state.undoStack.length > 20) {
+        state.undoStack.shift();
+      }
+      state.redoStack = [];
     }
     state.workspaceTab = options.workspaceTab ?? state.workspaceTab;
     render();
@@ -673,6 +883,7 @@ async function executeImmediately(input, options = {}) {
 function render() {
   const activeTrip = getActiveTrip();
   if (!activeTrip) {
+    renderTripBrowser();
     return;
   }
 
@@ -689,6 +900,7 @@ function render() {
 
   renderMeta(activeTrip);
   renderTitleEditor();
+  renderTripBrowser();
   renderDayTabs(activeTrip);
   renderScheduleShell();
   renderWorkspaceShell();
@@ -722,6 +934,26 @@ function renderMeta(trip) {
   ].join("");
 }
 
+function renderTripBrowser() {
+  const creating = state.tripBrowserOpen && state.tripBrowserMode === "create";
+  elements.tripBrowser.classList.toggle("hidden", !state.tripBrowserOpen);
+  elements.grid.classList.toggle("hidden", creating);
+  elements.globalDaySwitcher.classList.toggle("hidden", creating);
+  elements.metaPills.classList.toggle("hidden", creating);
+  elements.tripBrowserToggleButton.classList.toggle("button-primary", state.tripBrowserOpen && state.tripBrowserMode === "browse");
+  elements.newTripToggleButton.classList.toggle("button-primary", creating);
+  elements.tripList.innerHTML = state.tripList.length
+    ? state.tripList
+      .map((trip) => `
+        <button type="button" class="trip-list-item${trip.trip_id === state.tripId ? " active" : ""}" data-trip-id="${escapeHtml(trip.trip_id)}">
+          <strong>${escapeHtml(trip.title)}</strong>
+          <small>${escapeHtml(trip.start_date)} to ${escapeHtml(trip.end_date)} · ${trip.day_count} day${trip.day_count === 1 ? "" : "s"}</small>
+        </button>
+      `)
+      .join("")
+    : '<div class="trip-list-empty">No trips yet. Create one to get started.</div>';
+}
+
 function renderDayTabs(trip) {
   elements.dayTabs.innerHTML = "";
   trip.days.forEach((day, index) => {
@@ -738,6 +970,21 @@ function renderDayTabs(trip) {
     });
     elements.dayTabs.appendChild(button);
   });
+
+  updateDayActionState(trip);
+}
+
+function updateDayActionState(trip = getActiveTrip()) {
+  if (!trip) {
+    elements.addDayButton.disabled = true;
+    elements.removeDayButton.disabled = true;
+    return;
+  }
+
+  const selectedDay = trip.days.find((day) => day.date === state.selectedDay);
+  const canRemoveDay = Boolean(selectedDay) && trip.days.length > 1 && (selectedDay?.items?.length ?? 0) === 0;
+  elements.removeDayButton.disabled = !canRemoveDay || state.pending;
+  elements.addDayButton.disabled = state.pending;
 }
 
 function renderWorkspaceShell() {
@@ -771,7 +1018,9 @@ function renderScheduleShell() {
 }
 
 function renderWorkspaceNotice() {
-  const hasNotice = Boolean(state.statusMessage || state.undoAction);
+  const undoEntry = state.undoStack[state.undoStack.length - 1] ?? null;
+  const canRedo = state.redoStack.length > 0;
+  const hasNotice = Boolean(state.statusMessage || undoEntry || canRedo);
   elements.workspaceNotice.classList.toggle("hidden", !hasNotice);
   elements.workspaceNotice.classList.toggle("error", state.statusTone === "error");
   if (!hasNotice) {
@@ -782,20 +1031,23 @@ function renderWorkspaceNotice() {
 
   elements.workspaceNotice.setAttribute("role", state.statusTone === "error" ? "alert" : "status");
 
-  const summaryText = state.undoAction?.summary ?? "";
+  const summaryText = undoEntry?.summary ?? state.redoStack[state.redoStack.length - 1]?.summary ?? "";
   const summary = summaryText ? `<strong>${escapeHtml(summaryText)}</strong>` : "";
   const detail =
     state.statusMessage && state.statusMessage !== summaryText
       ? escapeHtml(state.statusMessage)
       : "";
   const copy = [summary, detail].filter(Boolean).join(" · ");
-  const undoButton = state.undoAction
+  const undoButton = undoEntry
     ? `<button type="button" class="button" data-workspace-action="undo"${state.pending ? " disabled" : ""}>Undo</button>`
+    : "";
+  const redoButton = canRedo
+    ? `<button type="button" class="button" data-workspace-action="redo"${state.pending ? " disabled" : ""}>Redo</button>`
     : "";
 
   elements.workspaceNotice.innerHTML = `
     <div class="workspace-notice-copy">${copy}</div>
-    ${undoButton ? `<div class="workspace-notice-actions">${undoButton}</div>` : ""}
+    ${(undoButton || redoButton) ? `<div class="workspace-notice-actions">${undoButton}${redoButton}</div>` : ""}
   `;
 }
 
@@ -990,9 +1242,12 @@ function renderFocusedEditor(trip, day, selectedItem) {
           <div class="focus-meta">${localTime(selectedItem.start_at)}-${localTime(selectedItem.end_at)} · ${escapeHtml(itemTypeLabel(selectedItem))}</div>
           ${place ? `<div class="focus-meta">${escapeHtml(place.name)}</div>` : ""}
         </div>
-        <button type="button" class="button ${selectedItem.locked ? "" : "button-primary"}" data-editor-action="toggle-lock">
-          ${selectedItem.locked ? "Unlock item" : "Lock item"}
-        </button>
+        <div class="focus-header-actions">
+          <button type="button" class="button ${selectedItem.locked ? "" : "button-primary"}" data-editor-action="toggle-lock">
+            ${selectedItem.locked ? "Unlock item" : "Lock item"}
+          </button>
+          <button type="button" class="button" data-editor-action="delete-item" ${disabledAttr}>Delete stop</button>
+        </div>
       </div>
 
       <div class="focus-actions">
@@ -1168,8 +1423,9 @@ function clearPlaceSearchSession() {
   state.placeSearchSession = null;
 }
 
-function clearUndoAction() {
-  state.undoAction = null;
+function clearHistory() {
+  state.undoStack = [];
+  state.redoStack = [];
 }
 
 function inferDefaultSelectedItemId(trip, dayDate, preferredItemId) {
@@ -1214,6 +1470,7 @@ function readUrlState() {
   const workspaceTab = params.get("workspace") === "assistant" ? "assistant" : "selection";
 
   return {
+    tripId: params.get("trip") || null,
     selectedDay: params.get("day") || null,
     selectedItemId: params.get("item") || null,
     scheduleTab,
@@ -1223,6 +1480,7 @@ function readUrlState() {
 
 function syncUrlState() {
   const params = new URLSearchParams(window.location.search);
+  writeUrlParam(params, "trip", state.tripId);
   writeUrlParam(params, "day", state.selectedDay);
   writeUrlParam(params, "item", state.selectedItemId);
   writeUrlParam(params, "schedule", state.scheduleTab !== "timeline" ? state.scheduleTab : null);
@@ -1257,6 +1515,120 @@ function handleTabKeydown(buttons, currentButton, event) {
   const nextIndex = (currentIndex + direction + orderedButtons.length) % orderedButtons.length;
   orderedButtons[nextIndex]?.click();
   orderedButtons[nextIndex]?.focus();
+}
+
+async function replayHistory(mode) {
+  const stack = mode === "undo" ? state.undoStack : state.redoStack;
+  const entry = stack[stack.length - 1];
+  if (!entry?.commands?.length || !state.trip) {
+    return;
+  }
+
+  setPending(true, mode === "undo" ? "Undoing last edit…" : "Reapplying last edit…");
+  try {
+    const payload = await requestJson(`/api/trips/${requireTripId()}/commands/execute`, {
+      method: "POST",
+      body: {
+        base_version: state.trip.version,
+        input: {
+          commands: entry.commands,
+        },
+      },
+    });
+
+    stack.pop();
+    state.trip = payload.trip;
+    state.preview = null;
+    state.previewMeta = null;
+    clearPlaceSearchSession();
+
+    const inverseEntry = payload.undo_commands?.length
+      ? {
+          commands: payload.undo_commands,
+          summary: payload.summary ?? (mode === "undo" ? "Redo last edit" : "Undo last redo"),
+        }
+      : null;
+
+    if (mode === "undo" && inverseEntry) {
+      state.redoStack.push(inverseEntry);
+      if (state.redoStack.length > 20) {
+        state.redoStack.shift();
+      }
+    }
+
+    if (mode === "redo" && inverseEntry) {
+      state.undoStack.push(inverseEntry);
+      if (state.undoStack.length > 20) {
+        state.undoStack.shift();
+      }
+    }
+
+    render();
+    setPending(false, mode === "undo" ? "Undo applied." : "Redo applied.");
+  } catch (error) {
+    setPending(false, error.message, "error");
+  }
+}
+
+function requireTripId() {
+  if (!state.tripId) {
+    throw new Error("No trip selected.");
+  }
+
+  return state.tripId;
+}
+
+function normalizeAssistantError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/could not map|preview requires either commands or utterance|direct execute/i.test(message)) {
+    return "I couldn’t map that request cleanly. Try naming the day or selecting the stop first.";
+  }
+
+  return message;
+}
+
+function seedTripCreateForm() {
+  const today = new Date();
+  const startDate = today.toISOString().slice(0, 10);
+  const endDate = addDaysToDate(startDate, 2);
+  elements.tripCreateTitle.value = "";
+  elements.tripCreateStartDate.value = startDate;
+  elements.tripCreateEndDate.value = endDate;
+  elements.tripCreateTimezone.value = "America/New_York";
+  elements.tripCreateTravelers.value = "2";
+}
+
+function addDaysToDate(date, days) {
+  const cursor = new Date(`${date}T00:00:00Z`);
+  cursor.setUTCDate(cursor.getUTCDate() + days);
+  return cursor.toISOString().slice(0, 10);
+}
+
+function syncTripListEntry(trip) {
+  const nextSummary = summarizeTripForList(trip);
+  const index = state.tripList.findIndex((candidate) => candidate.trip_id === trip.trip_id);
+  if (index === -1) {
+    state.tripList.unshift(nextSummary);
+    return;
+  }
+
+  state.tripList.splice(index, 1, nextSummary);
+}
+
+function summarizeTripForList(trip) {
+  const items = trip.days.flatMap((day) => day.items);
+  return {
+    trip_id: trip.trip_id,
+    title: trip.title,
+    timezone: trip.timezone,
+    start_date: trip.start_date,
+    end_date: trip.end_date,
+    traveler_count: trip.travelers?.length ?? 0,
+    day_count: trip.days.length,
+    conflict_count: trip.conflicts.length,
+    locked_item_count: items.filter((item) => item.locked).length,
+    last_updated_at: trip.change_log?.at(-1)?.timestamp ?? null,
+  };
 }
 
 function getAdjacentItem(trip, dayDate, itemId, direction) {
@@ -1506,6 +1878,7 @@ function setPending(value, message, tone = "neutral") {
   state.statusMessage = message;
   state.statusTone = tone;
   elements.assistantStatus.textContent = message;
+  updateDayActionState();
   renderWorkspaceNotice();
 }
 

@@ -154,3 +154,41 @@ test("rename endpoint updates the trip title", async () => {
     assert.equal(renameResponse.payload.data.trip.version, 2);
   });
 });
+
+test("trip endpoints expose saved trip summaries and create a new trip", async () => {
+  await withMockRuntime(async (runtime) => {
+    const listResponse = await handleAppRequest(runtime, {
+      method: "GET",
+      url: "/api/trips",
+    });
+
+    assert.equal(listResponse.status, 200);
+    assert.equal(listResponse.payload.ok, true);
+    assert.equal(listResponse.payload.data.trips.length, 1);
+
+    const createResponse = await handleAppRequest(runtime, {
+      method: "POST",
+      url: "/api/trips",
+      body: {
+        title: "Kyoto Food Weekend",
+        start_date: "2026-05-01",
+        end_date: "2026-05-03",
+        timezone: "Asia/Tokyo",
+        traveler_count: 2,
+      },
+    });
+
+    assert.equal(createResponse.status, 201);
+    assert.equal(createResponse.payload.ok, true);
+    assert.equal(createResponse.payload.data.trip.title, "Kyoto Food Weekend");
+    assert.equal(createResponse.payload.data.trip.days.length, 3);
+
+    const updatedList = await handleAppRequest(runtime, {
+      method: "GET",
+      url: "/api/trips",
+    });
+
+    assert.equal(updatedList.payload.data.trips.length, 2);
+    assert.ok(updatedList.payload.data.trips.some((trip) => trip.title === "Kyoto Food Weekend"));
+  });
+});

@@ -68,8 +68,17 @@ async function executeCommand(
     case "reorder_item":
       reorderItem(itinerary, command);
       return;
+    case "add_day":
+      addDay(itinerary, command);
+      return;
+    case "delete_day":
+      deleteDay(itinerary, command);
+      return;
     case "delete_item":
       deleteItem(itinerary, command);
+      return;
+    case "restore_item":
+      restoreItem(itinerary, command);
       return;
     case "replace_place":
       await replacePlace(itinerary, command, context);
@@ -126,6 +135,62 @@ function deleteItem(itinerary: Itinerary, command: PlannerCommand): void {
   itinerary.routes = itinerary.routes.filter(
     (route) => route.from_item_id !== location.item.id && route.to_item_id !== location.item.id
   );
+}
+
+function restoreItem(itinerary: Itinerary, command: PlannerCommand): void {
+  const day = findDay(itinerary, command.day_date);
+  if (!day) {
+    throw new PlannerError("invalid_command", "restore_item requires day_date.");
+  }
+
+  const payloadItem = command.payload?.item;
+  if (!payloadItem || typeof payloadItem !== "object") {
+    throw new PlannerError("invalid_command", "restore_item requires payload.item.");
+  }
+
+  const item = structuredClone(payloadItem) as ItineraryItem;
+  if (day.items.some((candidate) => candidate.id === item.id)) {
+    return;
+  }
+
+  day.items.push(item);
+  day.items.sort((left, right) => compareIso(left.start_at, right.start_at));
+}
+
+function addDay(itinerary: Itinerary, command: PlannerCommand): void {
+  const date = typeof command.payload?.date === "string"
+    ? command.payload.date
+    : addDaysToDate(itinerary.end_date, 1);
+
+  if (itinerary.days.some((day) => day.date === date)) {
+    throw new PlannerError("invalid_command", `Day already exists: ${date}`);
+  }
+
+  itinerary.days.push({
+    date,
+    label: typeof command.payload?.label === "string" ? command.payload.label : "",
+    summary: "",
+    items: [],
+  });
+  sortAndRelabelDays(itinerary);
+}
+
+function deleteDay(itinerary: Itinerary, command: PlannerCommand): void {
+  const day = findDay(itinerary, command.day_date);
+  if (!day) {
+    throw new PlannerError("invalid_command", "delete_day requires day_date.");
+  }
+
+  if (itinerary.days.length <= 1) {
+    throw new PlannerError("invalid_command", "Trip must keep at least one day.");
+  }
+
+  if (day.items.length > 0) {
+    throw new PlannerError("invalid_command", "Only empty days can be deleted.");
+  }
+
+  itinerary.days = itinerary.days.filter((candidate) => candidate.date !== day.date);
+  sortAndRelabelDays(itinerary);
 }
 
 function reorderItem(itinerary: Itinerary, command: PlannerCommand): void {
@@ -799,6 +864,21 @@ function pushOverlappingItemsForward(items: ItineraryItem[], startIndex: number,
 
 function sortDayItems(items: ItineraryItem[]): ItineraryItem[] {
   return items.slice().sort((left, right) => compareIso(left.start_at, right.start_at));
+}
+
+function sortAndRelabelDays(itinerary: Itinerary): void {
+  itinerary.days.sort((left, right) => left.date.localeCompare(right.date));
+  itinerary.days.forEach((day, index) => {
+    day.label = `Day ${index + 1}`;
+  });
+  itinerary.start_date = itinerary.days[0]?.date ?? itinerary.start_date;
+  itinerary.end_date = itinerary.days[itinerary.days.length - 1]?.date ?? itinerary.end_date;
+}
+
+function addDaysToDate(date: string, days: number): string {
+  const cursor = new Date(`${date}T00:00:00Z`);
+  cursor.setUTCDate(cursor.getUTCDate() + days);
+  return cursor.toISOString().slice(0, 10);
 }
 
 function maxIso(left: string, right: string): string {

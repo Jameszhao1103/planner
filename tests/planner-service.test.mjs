@@ -273,6 +273,106 @@ test("direct execute rejects utterance input", async () => {
   });
 });
 
+test("direct execute can delete an item and undo by restoring it", async () => {
+  await withMockRuntime(async (runtime) => {
+    const trip = await runtime.tripRepository.getTripById(runtime.sampleTripId);
+    assert.ok(trip);
+
+    const executed = await runtime.plannerService.executeCommandsDirect({
+      tripId: runtime.sampleTripId,
+      baseVersion: trip.version,
+      input: {
+        commands: [
+          {
+            command_id: "cmd_delete_direct",
+            action: "delete_item",
+            item_id: "item_lunch",
+            day_date: "2026-04-12",
+            reason: "Delete lunch",
+          },
+        ],
+      },
+    });
+
+    assert.equal(executed.trip.days[0].items.some((item) => item.id === "item_lunch"), false);
+    assert.equal(executed.undo_commands.length, 1);
+    assert.equal(executed.undo_commands[0].action, "restore_item");
+
+    const undone = await runtime.plannerService.executeCommandsDirect({
+      tripId: runtime.sampleTripId,
+      baseVersion: executed.trip.version,
+      input: {
+        commands: executed.undo_commands,
+      },
+    });
+
+    assert.equal(undone.trip.days[0].items.some((item) => item.id === "item_lunch"), true);
+  });
+});
+
+test("direct execute can add an empty day and remove it again", async () => {
+  await withMockRuntime(async (runtime) => {
+    const trip = await runtime.tripRepository.getTripById(runtime.sampleTripId);
+    assert.ok(trip);
+
+    const executed = await runtime.plannerService.executeCommandsDirect({
+      tripId: runtime.sampleTripId,
+      baseVersion: trip.version,
+      input: {
+        commands: [
+          {
+            command_id: "cmd_add_day_direct",
+            action: "add_day",
+            day_date: "2026-04-15",
+            reason: "Add a day",
+            payload: {
+              date: "2026-04-15",
+            },
+          },
+        ],
+      },
+    });
+
+    assert.equal(executed.trip.days.length, 4);
+    assert.equal(executed.trip.end_date, "2026-04-15");
+    assert.equal(executed.undo_commands[0].action, "delete_day");
+
+    const removed = await runtime.plannerService.executeCommandsDirect({
+      tripId: runtime.sampleTripId,
+      baseVersion: executed.trip.version,
+      input: {
+        commands: executed.undo_commands,
+      },
+    });
+
+    assert.equal(removed.trip.days.length, 3);
+    assert.equal(removed.trip.end_date, "2026-04-14");
+  });
+});
+
+test("rule fallback can map delete this stop when a stop is selected", async () => {
+  await withMockRuntime(async (runtime) => {
+    const trip = await runtime.tripRepository.getTripById(runtime.sampleTripId);
+    assert.ok(trip);
+
+    const preview = await runtime.plannerService.previewCommand({
+      tripId: runtime.sampleTripId,
+      baseVersion: trip.version,
+      input: {
+        utterance: "delete this stop",
+        context: {
+          selected_day: "2026-04-12",
+          selected_item_id: "item_lunch",
+        },
+      },
+    });
+
+    assert.equal(preview.commands.length, 1);
+    assert.equal(preview.commands[0].action, "delete_item");
+    assert.equal(preview.trip_preview.days[0].items.some((item) => item.id === "item_lunch"), false);
+  });
+});
+
 test("direct execute rejects unsupported actions", async () => {
   await withMockRuntime(async (runtime) => {
     const trip = await runtime.tripRepository.getTripById(runtime.sampleTripId);

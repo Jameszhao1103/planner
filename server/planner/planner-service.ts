@@ -1,4 +1,5 @@
 import { executeCommands } from "./command-executor.ts";
+import { recomputeDerivedState } from "./derivations.ts";
 import { buildPreviewDiff, diffConflictIds } from "./diff.ts";
 import { PlannerError } from "./errors.ts";
 import { createId } from "./ids.ts";
@@ -8,6 +9,8 @@ import type {
   Itinerary,
   PlannerApplyRequest,
   PlannerApplyResponse,
+  PlannerCreateTripRequest,
+  PlannerCreateTripResponse,
   PlannerDependencies,
   PlannerExecuteRequest,
   PlannerExecuteResponse,
@@ -18,6 +21,7 @@ import type {
   PlannerPreviewRequest,
   PlannerPreviewResponse,
   PlannerRejectPreviewRequest,
+  TripSummary,
 } from "./types.ts";
 
 export class PlannerService {
@@ -33,6 +37,48 @@ export class PlannerService {
     this.tripRepository = tripRepository;
     this.previewRepository = previewRepository;
     this.dependencies = dependencies;
+  }
+
+  async listTrips(): Promise<TripSummary[]> {
+    const trips = await this.tripRepository.listTrips();
+    return trips.map(summarizeTrip);
+  }
+
+  async createTrip(input: PlannerCreateTripRequest): Promise<PlannerCreateTripResponse> {
+    const title = input.title.trim();
+    if (!title) {
+      throw new PlannerError("invalid_command", "Trip title cannot be empty.");
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(input.endDate)) {
+      throw new PlannerError("invalid_command", "Trip dates must use YYYY-MM-DD.");
+    }
+
+    if (input.startDate > input.endDate) {
+      throw new PlannerError("invalid_command", "Trip end date must be on or after the start date.");
+    }
+
+    const trip = createTripSkeleton({
+      tripId: createId("trip"),
+      title,
+      timezone: input.timezone || "America/New_York",
+      startDate: input.startDate,
+      endDate: input.endDate,
+      travelerCount: Math.max(1, Math.min(12, input.travelerCount ?? 2)),
+      createdAt: this.now().toISOString(),
+    });
+
+    await recomputeDerivedState(trip, {
+      ...this.dependencies,
+      now: this.now(),
+    });
+
+    const savedTrip = await this.tripRepository.saveTrip(trip);
+
+    return {
+      trip: savedTrip,
+      summary: `Created ${savedTrip.title}.`,
+    };
   }
 
   async previewCommand(input: PlannerPreviewRequest): Promise<PlannerPreviewResponse> {
@@ -258,13 +304,17 @@ const DIRECT_EXECUTE_ACTIONS = new Set<PlannerCommand["action"]>([
   "unlock_item",
   "move_item",
   "reorder_item",
+  "delete_item",
+  "restore_item",
+  "add_day",
+  "delete_day",
 ]);
 
 function assertDirectExecuteCommand(command: PlannerCommand): void {
   if (!DIRECT_EXECUTE_ACTIONS.has(command.action)) {
     throw new PlannerError(
       "invalid_command",
-      `Direct execute only supports lock_item, unlock_item, move_item, and reorder_item. Received ${command.action}.`
+      `Direct execute only supports lock_item, unlock_item, move_item, reorder_item, delete_item, restore_item, add_day, and delete_day. Received ${command.action}.`
     );
   }
 }
@@ -279,14 +329,74 @@ function buildDirectUndoCommands(
   const undoCommands: PlannerCommand[] = [];
   const seenMoveItems = new Set<string>();
   const seenLockItems = new Set<string>();
+  const seenDeletedItems = new Set<string>();
+  const seenDays = new Set<string>();
 
   [...commands].reverse().forEach((command) => {
+    if (command.action === "add_day" && command.day_date && !seenDays.has(command.day_date)) {
+      undoCommands.push({
+        command_id: createId("cmd"),
+        action: "delete_day",
+        day_date: command.day_date,
+        reason: "Undo add day",
+      });
+      seenDays.add(command.day_date);
+      return;
+    }
+
+    if (command.action === "delete_day" && command.day_date && !seenDays.has(command.day_date)) {
+      const originalDay = before.days.find((day) => day.date === command.day_date);
+      if (!originalDay) {
+        return;
+      }
+
+      undoCommands.push({
+        command_id: createId("cmd"),
+        action: "add_day",
+        day_date: command.day_date,
+        reason: "Undo delete day",
+        payload: {
+          date: originalDay.date,
+          label: originalDay.label,
+        },
+      });
+      seenDays.add(command.day_date);
+      return;
+    }
+
     if (!command.item_id) {
       return;
     }
 
     const beforeItem = beforeItems.get(command.item_id);
     const afterItem = afterItems.get(command.item_id);
+
+    if (command.action === "delete_item") {
+      if (!beforeItem || seenDeletedItems.has(command.item_id)) {
+        return;
+      }
+
+      undoCommands.push(buildUndoRestoreItemCommand(before, beforeItem));
+      seenDeletedItems.add(command.item_id);
+      return;
+    }
+
+    if (command.action === "restore_item") {
+      if (!afterItem || seenDeletedItems.has(command.item_id)) {
+        return;
+      }
+
+      undoCommands.push({
+        command_id: createId("cmd"),
+        action: "delete_item",
+        item_id: afterItem.id,
+        day_date: findItemDayDate(after, afterItem.id),
+        reason: "Undo restore item",
+      });
+      seenDeletedItems.add(command.item_id);
+      return;
+    }
+
     if (!beforeItem || !afterItem) {
       return;
     }
@@ -359,4 +469,100 @@ function buildUndoMoveCommand(
 
 function findItemDayDate(itinerary: Itinerary, itemId: string): string | undefined {
   return itinerary.days.find((day) => day.items.some((item) => item.id === itemId))?.date;
+}
+
+function buildUndoRestoreItemCommand(before: Itinerary, item: Itinerary["days"][number]["items"][number]): PlannerCommand {
+  return {
+    command_id: createId("cmd"),
+    action: "restore_item",
+    item_id: item.id,
+    day_date: findItemDayDate(before, item.id),
+    reason: "Undo delete item",
+    payload: {
+      item: structuredClone(item),
+    },
+  };
+}
+
+function createTripSkeleton(input: {
+  tripId: string;
+  title: string;
+  timezone: string;
+  startDate: string;
+  endDate: string;
+  travelerCount: number;
+  createdAt: string;
+}): Itinerary {
+  const days = enumerateDates(input.startDate, input.endDate).map((date, index) => ({
+    date,
+    label: `Day ${index + 1}`,
+    summary: "",
+    items: [],
+  }));
+
+  return {
+    trip_id: input.tripId,
+    version: 1,
+    title: input.title,
+    timezone: input.timezone,
+    start_date: input.startDate,
+    end_date: input.endDate,
+    travelers: Array.from({ length: input.travelerCount }, (_, index) => ({
+      id: `traveler_${index + 1}`,
+      name: `Traveler ${index + 1}`,
+    })),
+    preferences: {
+      pace: "balanced",
+      max_walk_minutes: 20,
+      preferred_transport_modes: ["drive", "walk"],
+      meal_windows: {
+        lunch: { start: "11:30", end: "13:30" },
+        dinner: { start: "18:00", end: "20:30" },
+      },
+      must_visit_place_ids: [],
+      avoid_place_ids: [],
+    },
+    days,
+    places: [],
+    routes: [],
+    conflicts: [],
+    markdown_sections: [],
+    change_log: [
+      {
+        id: createId("change"),
+        timestamp: input.createdAt,
+        actor: "user",
+        summary: `Created ${input.title}.`,
+      },
+    ],
+  };
+}
+
+function enumerateDates(startDate: string, endDate: string): string[] {
+  const dates: string[] = [];
+  const cursor = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+
+  while (cursor.getTime() <= end.getTime()) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return dates;
+}
+
+function summarizeTrip(trip: Itinerary): TripSummary {
+  const items = trip.days.flatMap((day) => day.items);
+  return {
+    trip_id: trip.trip_id,
+    title: trip.title,
+    timezone: trip.timezone,
+    start_date: trip.start_date,
+    end_date: trip.end_date,
+    traveler_count: trip.travelers?.length ?? 0,
+    day_count: trip.days.length,
+    conflict_count: trip.conflicts.length,
+    locked_item_count: items.filter((item) => item.locked).length,
+    last_updated_at: trip.change_log.at(-1)?.timestamp,
+  };
 }
