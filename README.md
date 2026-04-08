@@ -13,9 +13,9 @@ The product goal is simple: let AI generate and revise a realistic plan without 
 
 ## Screenshots
 
-### Workspace overview
+### Current workspace UI
 
-![Planner Workspace overview](docs/screenshots/workspace-overview.png)
+![Planner Workspace current UI](docs/screenshots/workspace-current-ui.png)
 
 ## Current MVP
 
