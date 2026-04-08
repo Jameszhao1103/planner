@@ -44,6 +44,32 @@ export function combineLocalDateTime(dayDate: string, time: string, offset: stri
   return `${dayDate}T${time}:00${offset}`;
 }
 
+export function offsetForTimeZoneOnDate(dayDate: string, timeZone: string): string {
+  try {
+    const probe = new Date(`${dayDate}T12:00:00Z`);
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour: "2-digit",
+      timeZoneName: "longOffset",
+    });
+    const value = formatter.formatToParts(probe).find((part) => part.type === "timeZoneName")?.value ?? "GMT";
+    if (value === "GMT") {
+      return "Z";
+    }
+
+    const match = value.match(/^GMT([+-])(\d{1,2})(?::(\d{2}))?$/u);
+    if (!match) {
+      return "Z";
+    }
+
+    const hour = String(Number.parseInt(match[2], 10)).padStart(2, "0");
+    const minute = match[3] ?? "00";
+    return `${match[1]}${hour}:${minute}`;
+  } catch {
+    return "Z";
+  }
+}
+
 export function parseTimeToMinutes(value: string): number {
   const [hour, minute] = value.split(":").map((part) => Number.parseInt(part, 10));
   return hour * 60 + minute;

@@ -1036,7 +1036,7 @@ body {
 
 .hour-ruler {
   display: grid;
-  grid-template-columns: repeat(15, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--timeline-columns, 15), minmax(0, 1fr));
   padding: 0 4px 8px;
   font-size: 12px;
   font-weight: 700;
@@ -1064,9 +1064,9 @@ body {
     repeating-linear-gradient(
       90deg,
       rgba(20, 90, 74, 0.055) 0,
-      rgba(20, 90, 74, 0.055) calc(100% / 15 - 1px),
-      rgba(173, 158, 131, 0.78) calc(100% / 15 - 1px),
-      rgba(173, 158, 131, 0.78) calc(100% / 15)
+      rgba(20, 90, 74, 0.055) calc(100% / var(--timeline-columns, 15) - 1px),
+      rgba(173, 158, 131, 0.78) calc(100% / var(--timeline-columns, 15) - 1px),
+      rgba(173, 158, 131, 0.78) calc(100% / var(--timeline-columns, 15))
     ),
     linear-gradient(180deg, rgba(188, 173, 147, 0.22), rgba(188, 173, 147, 0.08));
   box-shadow:
@@ -1329,6 +1329,24 @@ body {
 .focus-card {
   position: relative;
   overflow: hidden;
+}
+
+.focus-empty {
+  display: grid;
+  gap: 14px;
+}
+
+.focus-empty h3 {
+  margin: 6px 0 8px;
+  font-size: 22px;
+  line-height: 1.08;
+}
+
+.focus-empty p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 48ch;
 }
 
 .focus-card::before {

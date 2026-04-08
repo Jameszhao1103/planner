@@ -483,6 +483,45 @@ test("insert_item after pushes later unlocked items when there is no gap", async
   });
 });
 
+test("insert_item can seed the first stop on an empty day without a target item", async () => {
+  await withMockRuntime(async (runtime) => {
+    const created = await runtime.plannerService.createTrip({
+      title: "Empty test trip",
+      startDate: "2026-06-01",
+      endDate: "2026-06-02",
+      timezone: "America/New_York",
+      travelerCount: 2,
+    });
+
+    const preview = await runtime.plannerService.previewCommand({
+      tripId: created.trip.trip_id,
+      baseVersion: created.trip.version,
+      input: {
+        commands: [
+          {
+            command_id: "cmd_insert_first_stop",
+            action: "insert_item",
+            day_date: "2026-06-01",
+            reason: "Seed the first stop on an empty day",
+            kind: "meal",
+            place_id: "place_white_duck",
+            payload: {
+              meal_type: "lunch",
+              start_time: "12:00",
+            },
+          },
+        ],
+      },
+    });
+
+    const day = preview.trip_preview.days.find((candidate) => candidate.date === "2026-06-01");
+    assert.ok(day);
+    assert.equal(day.items.length, 1);
+    assert.equal(day.items[0].place_id, "place_white_duck");
+    assert.equal(day.items[0].start_at, "2026-06-01T12:00:00-04:00");
+  });
+});
+
 test("insert_item throws when a locked item would need to move", async () => {
   await withMockRuntime(async (runtime) => {
     const trip = await runtime.tripRepository.getTripById(runtime.sampleTripId);

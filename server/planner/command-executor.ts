@@ -9,6 +9,7 @@ import {
   extractLocalDate,
   extractLocalTime,
   minutesBetween,
+  offsetForTimeZoneOnDate,
   weekdayFromDate,
 } from "./time.ts";
 import type {
@@ -290,7 +291,7 @@ async function insertItem(
   }
 
   const payload = command.payload ?? {};
-  const templateOffset = day.items[0]?.start_at.match(/(Z|[+-]\d{2}:\d{2})$/)?.[1] ?? "Z";
+  const templateOffset = inferDayOffset(day, itinerary.timezone);
   const durationMinutes = coerceNumber(payload.duration_minutes) ?? defaultInsertDurationMinutes(command.kind);
   const position = payload.position === "before" || payload.position === "after" ? payload.position : null;
   const targetLocation = position ? findItemLocation(itinerary, command.target_item_id) : null;
@@ -407,7 +408,7 @@ async function fillMeal(
     });
   }
 
-  const offset = day.items[0]?.start_at.match(/(Z|[+-]\d{2}:\d{2})$/)?.[1] ?? "Z";
+  const offset = inferDayOffset(day, itinerary.timezone);
   const startAt = combineLocalDateTime(day.date, pickMealStart(window, day), offset);
   const endAt = addMinutesToIso(startAt, 60);
   const mealItem: ItineraryItem = {
@@ -1002,6 +1003,10 @@ function pickMealStart(window: TimeWindow, day: ItineraryDay): string {
 
 function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function inferDayOffset(day: ItineraryDay, timeZone: string): string {
+  return day.items[0]?.start_at.match(/(Z|[+-]\d{2}:\d{2})$/)?.[1] ?? offsetForTimeZoneOnDate(day.date, timeZone);
 }
 
 function coerceMealType(value: unknown): "breakfast" | "lunch" | "dinner" | null {

@@ -50,9 +50,9 @@ const SHORT_DATE_WITH_YEAR_FORMATTER = new Intl.DateTimeFormat(UI_LOCALE, {
   year: "numeric",
 });
 const NUMBER_FORMATTER = new Intl.NumberFormat(UI_LOCALE);
-
-const TIMELINE_START_HOUR = 8;
-const TIMELINE_TOTAL_MINUTES = 14 * 60;
+const TIME_ZONE_PARTS_FORMATTER_CACHE = new Map();
+const TIMELINE_MIN_SPAN_HOURS = 8;
+const TIMELINE_WINDOW_PADDING_MINUTES = 45;
 const TIMELINE_MIN_WIDTH_PERCENT = 5.4;
 const TIMELINE_CARD_HEIGHT = 68;
 const TIMELINE_ROW_HEIGHT = 78;
@@ -492,12 +492,76 @@ elements.focusEditor.addEventListener("click", async (event) => {
   }
 
   const activeTrip = getActiveTrip();
+  const selectedDay = activeTrip?.days.find((candidate) => candidate.date === state.selectedDay) ?? null;
   const selectedItem = getSelectedItem(activeTrip, state.selectedDay, state.selectedItemId);
+  const action = actionTarget.dataset.editorAction;
+
   if (!selectedItem) {
+    if (!selectedDay) {
+      return;
+    }
+
+    if (action === "add-first-activity" || action === "add-first-meal") {
+      const kind = action === "add-first-meal" ? "meal" : "activity";
+      const current = getPlaceSearchSessionForDay(selectedDay.date);
+      if (current?.mode === "insert" && current.kind === kind) {
+        clearPlaceSearchSession();
+      } else {
+        state.placeSearchSession = {
+          mode: "insert",
+          itemId: null,
+          dayDate: selectedDay.date,
+          position: null,
+          kind,
+          mealType: "lunch",
+          query: "",
+          results: [],
+        };
+      }
+      render();
+      return;
+    }
+
+    if (action === "draft-day") {
+      await previewWithInput({
+        utterance: "Draft a balanced starter itinerary for the selected day.",
+        context: {
+          selected_day: selectedDay.date,
+        },
+      });
+      return;
+    }
+
+    if (action === "insert-place") {
+      const placeId = actionTarget.dataset.placeId;
+      const placeName = actionTarget.dataset.placeName ?? "selected place";
+      const session = getPlaceSearchSessionForDay(selectedDay.date);
+      if (!placeId || !session || session.mode !== "insert") {
+        return;
+      }
+
+      await previewWithInput({
+        commands: [
+          {
+            command_id: `cmd_insert_${Date.now()}`,
+            action: "insert_item",
+            day_date: selectedDay.date,
+            reason: `Add ${placeName} to ${selectedDay.label ?? "this day"}`,
+            kind: session.kind,
+            place_id: placeId,
+            payload: {
+              meal_type: session.kind === "meal" ? session.mealType : undefined,
+              start_time: defaultStartTimeForInsertSession(session),
+            },
+          },
+        ],
+      });
+      return;
+    }
+
     return;
   }
 
-  const action = actionTarget.dataset.editorAction;
   if (action === "toggle-lock") {
     await executeImmediately({
       commands: [
@@ -567,13 +631,14 @@ elements.focusEditor.addEventListener("click", async (event) => {
 
   if (action === "add-before" || action === "add-after") {
     const position = action === "add-before" ? "before" : "after";
-    const current = getPlaceSearchSessionForItem(selectedItem.id);
+    const current = getPlaceSearchSessionForItem(selectedItem.id, state.selectedDay);
     if (current?.mode === "insert" && current.position === position) {
       clearPlaceSearchSession();
     } else {
       state.placeSearchSession = {
         mode: "insert",
         itemId: selectedItem.id,
+        dayDate: state.selectedDay,
         position,
         kind: "activity",
         mealType: "lunch",
@@ -613,7 +678,7 @@ elements.focusEditor.addEventListener("click", async (event) => {
   if (action === "insert-place") {
     const placeId = actionTarget.dataset.placeId;
     const placeName = actionTarget.dataset.placeName ?? "selected place";
-    const session = getPlaceSearchSessionForItem(selectedItem.id);
+    const session = getPlaceSearchSessionForItem(selectedItem.id, state.selectedDay);
     if (!placeId || !session || session.mode !== "insert") {
       return;
     }
@@ -648,12 +713,11 @@ elements.focusEditor.addEventListener("change", (event) => {
   }
 
   const activeTrip = getActiveTrip();
+  const selectedDay = activeTrip?.days.find((candidate) => candidate.date === state.selectedDay) ?? null;
   const selectedItem = getSelectedItem(activeTrip, state.selectedDay, state.selectedItemId);
-  if (!selectedItem) {
-    return;
-  }
-
-  const session = getPlaceSearchSessionForItem(selectedItem.id);
+  const session = selectedItem
+    ? getPlaceSearchSessionForItem(selectedItem.id, state.selectedDay)
+    : getPlaceSearchSessionForDay(selectedDay?.date);
   if (!session || session.mode !== "insert") {
     return;
   }
@@ -683,12 +747,13 @@ elements.focusEditor.addEventListener("submit", async (event) => {
   }
 
   const activeTrip = getActiveTrip();
+  const selectedDay = activeTrip?.days.find((candidate) => candidate.date === state.selectedDay) ?? null;
   const selectedItem = getSelectedItem(activeTrip, state.selectedDay, state.selectedItemId);
-  if (!selectedItem) {
+  const formMode = form.dataset.editorForm;
+  if (formMode !== "insert-search" && !selectedItem) {
     return;
   }
 
-  const formMode = form.dataset.editorForm;
   if (formMode === "time") {
     const formData = new FormData(form);
     const startTime = String(formData.get("start_time") ?? "").trim();
@@ -727,15 +792,18 @@ elements.focusEditor.addEventListener("submit", async (event) => {
     await searchPlaces({
       mode: "replace",
       itemId: selectedItem.id,
+      dayDate: state.selectedDay,
       query,
       kind: inferInsertKindFromItem(selectedItem),
       mealType: selectedItem.kind === "meal" ? normalizeMealType(selectedItem.category) : null,
-    }, selectedItem);
+    }, selectedItem, selectedDay);
     return;
   }
 
   if (formMode === "insert-search") {
-    const session = getPlaceSearchSessionForItem(selectedItem.id);
+    const session = selectedItem
+      ? getPlaceSearchSessionForItem(selectedItem.id, state.selectedDay)
+      : getPlaceSearchSessionForDay(selectedDay?.date);
     if (!session || session.mode !== "insert") {
       return;
     }
@@ -753,7 +821,7 @@ elements.focusEditor.addEventListener("submit", async (event) => {
       kind: kind === "meal" ? "meal" : "activity",
       mealType,
       query,
-    }, selectedItem);
+    }, selectedItem, selectedDay);
   }
 });
 
@@ -1135,9 +1203,10 @@ function renderMap(trip, day, selectedItem) {
 }
 
 function renderPlan(trip, day, selectedItem) {
+  const timeZone = resolveTripTimeZone(trip);
   const flow = buildPlanFlow(trip, day);
   if (flow.length === 0) {
-    elements.planPanel.innerHTML = '<div class="plan-empty">No plan for this day.</div>';
+    elements.planPanel.innerHTML = '<div class="plan-empty">No plan yet for this day. Add the first stop from Selection or ask Assistant to draft it.</div>';
     return;
   }
 
@@ -1152,7 +1221,7 @@ function renderPlan(trip, day, selectedItem) {
           const locked = block.locked ? '<span class="lock-badge">Locked</span>' : "";
           return `
             <article class="plan-row ${flowBlockClass(block)}${block.itemId === selectedItem?.id ? " selected" : ""}" data-item-id="${block.itemId}">
-              <div class="plan-time">${localTime(block.start_at)}-${localTime(block.end_at)}</div>
+              <div class="plan-time">${localTime(block.start_at, timeZone)}-${localTime(block.end_at, timeZone)}</div>
               <div class="plan-copy">
                 <strong>${escapeHtml(block.title)}</strong>
                 ${meta}
@@ -1179,9 +1248,16 @@ function renderTimeline(trip, day, selectedItem) {
     return;
   }
 
+  const timeZone = resolveTripTimeZone(trip);
   const model = buildTimelineModel(trip, day);
-  const hourMarks = Array.from({ length: 15 }, (_, index) => `<span>${String(index + 8).padStart(2, "0")}</span>`).join("");
-  const layout = buildTimelineLayout(model.events);
+  if (model.events.length === 0 && model.transports.length === 0) {
+    elements.timelinePanel.innerHTML = '<div class="timeline-empty">No scheduled items yet. Add the first stop from Selection or ask Assistant to draft this day.</div>';
+    return;
+  }
+
+  const window = computeTimelineWindow([...model.events, ...model.transports], day.date, timeZone);
+  const hourMarks = buildTimelineHourMarks(window);
+  const layout = buildTimelineLayout(model.events, window, day.date, timeZone);
   const eventPills = layout.events
     .map(({ block, left, width, top, density }) => {
       const warning = block.warningCount
@@ -1200,8 +1276,8 @@ function renderTimeline(trip, day, selectedItem) {
     .join("");
   const transportStrips = model.transports
     .map((block) => {
-      const left = clampPercent((minutesFromDayStart(block.start_at) / TIMELINE_TOTAL_MINUTES) * 100);
-      const width = Math.max(1.8, (exactDurationMinutes(block.start_at, block.end_at) / TIMELINE_TOTAL_MINUTES) * 100);
+      const left = clampPercent(percentFromTimelineMinute(minutesRelativeToDay(block.start_at, day.date, timeZone), window));
+      const width = Math.max(1.8, (exactDurationMinutes(block.start_at, block.end_at) / window.totalMinutes) * 100);
       const fittedLeft = Math.max(0, Math.min(100 - width, left));
       const warning = block.warningCount
         ? `<span class="transport-alert" title="${block.warningCount} warning(s)"></span>`
@@ -1217,7 +1293,7 @@ function renderTimeline(trip, day, selectedItem) {
     .join("");
 
   elements.timelinePanel.innerHTML = `
-    <div class="timeline-board" style="--timeline-rows:${layout.rows}; --timeline-height:${layout.totalHeight}px;">
+    <div class="timeline-board" style="--timeline-rows:${layout.rows}; --timeline-height:${layout.totalHeight}px; --timeline-columns:${window.columnCount};">
       <div class="hour-ruler">${hourMarks}</div>
       <div class="lane-grid">
         ${eventPills}
@@ -1226,7 +1302,7 @@ function renderTimeline(trip, day, selectedItem) {
     </div>
   `;
 
-  attachTimelineInteractions(day);
+  attachTimelineInteractions(day, window);
 }
 
 function renderAssistant(trip, day, selectedItem) {
@@ -1266,6 +1342,11 @@ function renderAssistant(trip, day, selectedItem) {
 }
 
 function renderFocusedEditor(trip, day, selectedItem) {
+  const timeZone = resolveTripTimeZone(trip);
+  if (!selectedItem && day?.items?.length === 0) {
+    return renderEmptyDayEditor(day);
+  }
+
   if (!selectedItem) {
     return '<div class="focus-empty">Select an item from the map, plan, or timeline to edit it.</div>';
   }
@@ -1276,7 +1357,7 @@ function renderFocusedEditor(trip, day, selectedItem) {
     : null;
   const previous = getAdjacentItem(trip, day?.date, selectedItem.id, -1);
   const next = getAdjacentItem(trip, day?.date, selectedItem.id, 1);
-  const searchSession = getPlaceSearchSessionForItem(selectedItem.id);
+  const searchSession = getPlaceSearchSessionForItem(selectedItem.id, day?.date);
   const replaceSession = searchSession?.mode === "replace" ? searchSession : null;
   const insertSession = searchSession?.mode === "insert" ? searchSession : null;
   const replaceResults = replaceSession ? renderSearchResults(replaceSession.results, "replace-place") : "";
@@ -1287,7 +1368,7 @@ function renderFocusedEditor(trip, day, selectedItem) {
         <div>
           <div class="focus-kicker">Focused item</div>
           <h3>${escapeHtml(selectedItem.title)}</h3>
-          <div class="focus-meta">${localTime(selectedItem.start_at)}-${localTime(selectedItem.end_at)} · ${escapeHtml(itemTypeLabel(selectedItem))}</div>
+          <div class="focus-meta">${localTime(selectedItem.start_at, timeZone)}-${localTime(selectedItem.end_at, timeZone)} · ${escapeHtml(itemTypeLabel(selectedItem))}</div>
           ${place ? `<div class="focus-meta">${escapeHtml(place.name)}</div>` : ""}
         </div>
         <div class="focus-header-actions">
@@ -1307,11 +1388,11 @@ function renderFocusedEditor(trip, day, selectedItem) {
       <form class="editor-form" data-editor-form="time">
         <label>
           <span>Start</span>
-          <input type="time" name="start_time" value="${localTime(selectedItem.start_at)}" ${disabledAttr}>
+          <input type="time" name="start_time" value="${localTime(selectedItem.start_at, timeZone)}" ${disabledAttr}>
         </label>
         <label>
           <span>End</span>
-          <input type="time" name="end_time" value="${localTime(selectedItem.end_at)}" ${disabledAttr}>
+          <input type="time" name="end_time" value="${localTime(selectedItem.end_at, timeZone)}" ${disabledAttr}>
         </label>
         <button type="submit" class="button button-primary" ${disabledAttr}>Save time</button>
       </form>
@@ -1347,9 +1428,31 @@ function renderFocusedEditor(trip, day, selectedItem) {
   `;
 }
 
-function renderInsertComposer(session) {
+function renderEmptyDayEditor(day) {
+  const insertSession = getPlaceSearchSessionForDay(day.date);
+  return `
+    <section class="focus-empty focus-empty-day">
+      <div class="focus-empty-copy">
+        <div class="focus-kicker">First stop</div>
+        <h3>${escapeHtml(day.label ?? "Empty day")}</h3>
+        <p>This day is still empty. Add the first activity or meal, or ask Assistant to draft a starting plan.</p>
+      </div>
+      <div class="insert-actions">
+        <button type="button" class="button ${insertSession?.kind === "activity" ? "button-primary" : ""}" data-editor-action="add-first-activity">Add first activity</button>
+        <button type="button" class="button ${insertSession?.kind === "meal" ? "button-primary" : ""}" data-editor-action="add-first-meal">Add first meal</button>
+        <button type="button" class="button" data-editor-action="draft-day">Ask Assistant</button>
+      </div>
+      ${insertSession ? renderInsertComposer(insertSession, { firstStop: true }) : ""}
+    </section>
+  `;
+}
+
+function renderInsertComposer(session, options = {}) {
   const kind = session.kind === "meal" ? "meal" : "activity";
   const mealType = session.mealType ?? "lunch";
+  const copy = options.firstStop
+    ? `Preview first. This will add the first ${kind} on this day.`
+    : `Preview first. This will insert a new ${kind} ${session.position} the current item.`;
   return `
     <div class="insert-composer">
       <div class="insert-composer-grid">
@@ -1378,7 +1481,7 @@ function renderInsertComposer(session) {
         </label>
         <button type="submit" class="button">Search</button>
       </form>
-      <div class="insert-composer-meta">Preview first. This will insert a new ${kind} ${session.position} the current item.</div>
+      <div class="insert-composer-meta">${copy}</div>
       ${insertResultsContainer(session)}
     </div>
   `;
@@ -1414,8 +1517,9 @@ function renderSearchResults(results, action) {
     .join("");
 }
 
-async function searchPlaces(session, selectedItem) {
-  setPending(true, `Searching places for ${selectedItem.title}…`);
+async function searchPlaces(session, selectedItem, day) {
+  const subjectLabel = selectedItem?.title ?? day?.label ?? "this day";
+  setPending(true, `Searching places for ${subjectLabel}…`);
   try {
     const nextSession = {
       ...session,
@@ -1438,6 +1542,10 @@ async function searchPlaces(session, selectedItem) {
 function inferSearchTypeForSession(item, session) {
   if (session.mode === "insert") {
     return session.kind === "meal" ? "restaurant" : "";
+  }
+
+  if (!item) {
+    return "";
   }
 
   if (item.kind === "meal") {
@@ -1463,8 +1571,16 @@ function normalizeMealType(value) {
   return "lunch";
 }
 
-function getPlaceSearchSessionForItem(itemId) {
-  return state.placeSearchSession?.itemId === itemId ? state.placeSearchSession : null;
+function getPlaceSearchSessionForItem(itemId, dayDate = state.selectedDay) {
+  return state.placeSearchSession?.itemId === itemId && state.placeSearchSession?.dayDate === dayDate
+    ? state.placeSearchSession
+    : null;
+}
+
+function getPlaceSearchSessionForDay(dayDate = state.selectedDay) {
+  return state.placeSearchSession?.itemId == null && state.placeSearchSession?.dayDate === dayDate
+    ? state.placeSearchSession
+    : null;
 }
 
 function clearPlaceSearchSession() {
@@ -1849,7 +1965,7 @@ function buildQuickActionInput(action, dayDate) {
   }
 }
 
-function attachTimelineInteractions(day) {
+function attachTimelineInteractions(day, window) {
   const laneGrid = elements.timelinePanel.querySelector(".lane-grid");
   if (!laneGrid || !day) {
     return;
@@ -1877,6 +1993,7 @@ function attachTimelineInteractions(day) {
         dayDate: day.date,
         startX: event.clientX,
         laneWidth: laneGrid.getBoundingClientRect().width,
+        totalMinutes: window.totalMinutes,
         originalStartAt: item.start_at,
         originalEndAt: item.end_at,
         pill,
@@ -1925,7 +2042,7 @@ async function handleTimelinePointerUp(event) {
     return;
   }
 
-  const rawMinutes = (deltaX / Math.max(1, drag.laneWidth)) * TIMELINE_TOTAL_MINUTES;
+  const rawMinutes = (deltaX / Math.max(1, drag.laneWidth)) * drag.totalMinutes;
   const deltaMinutes = snapMinutes(rawMinutes, 15);
   if (!deltaMinutes) {
     return;
@@ -2486,13 +2603,18 @@ function eventClass(item) {
   return "activity-block";
 }
 
-function localTime(iso) {
-  return iso.slice(11, 16);
+function formatIsoTimeInZone(iso, timeZone) {
+  return getTimeZoneDateTimeParts(iso, timeZone).time;
 }
 
-function minutesFromDayStart(iso) {
-  const [hour, minute] = iso.slice(11, 16).split(":").map((part) => Number.parseInt(part, 10));
-  return Math.max(0, (hour - TIMELINE_START_HOUR) * 60 + minute);
+function localTime(iso, timeZone = BROWSER_TIME_ZONE) {
+  return formatIsoTimeInZone(iso, timeZone);
+}
+
+function minutesRelativeToDay(iso, dayDate, timeZone = BROWSER_TIME_ZONE) {
+  const parts = getTimeZoneDateTimeParts(iso, timeZone);
+  const dayOffset = daysBetweenDateStrings(dayDate, parts.date);
+  return dayOffset * 24 * 60 + parts.hour * 60 + parts.minute;
 }
 
 function durationMinutes(startAt, endAt) {
@@ -2503,16 +2625,16 @@ function clampPercent(value) {
   return Math.max(0, Math.min(96, value));
 }
 
-function buildTimelineLayout(items) {
+function buildTimelineLayout(items, window, dayDate, timeZone) {
   const rowEnds = [];
   const events = items
     .slice()
     .sort((left, right) => new Date(left.start_at).getTime() - new Date(right.start_at).getTime())
     .map((block) => {
-      const density = timelineDensity(block);
+      const density = timelineDensity(block, window.totalMinutes);
       const displayTitle = timelineBlockTitle(block, density);
-      const startPercent = clampPercent((minutesFromDayStart(block.start_at) / TIMELINE_TOTAL_MINUTES) * 100);
-      const actualWidth = Math.max(4, (durationMinutes(block.start_at, block.end_at) / TIMELINE_TOTAL_MINUTES) * 100);
+      const startPercent = clampPercent(percentFromTimelineMinute(minutesRelativeToDay(block.start_at, dayDate, timeZone), window));
+      const actualWidth = Math.max(4, (durationMinutes(block.start_at, block.end_at) / window.totalMinutes) * 100);
       const minimumWidth = timelineMinimumWidth(displayTitle, density);
       const width = Math.max(actualWidth, minimumWidth);
       const left = Math.max(0, Math.min(100 - width, startPercent));
@@ -2547,6 +2669,65 @@ function buildTimelineLayout(items) {
     transportTop,
     totalHeight: transportTop + TIMELINE_TRANSPORT_HEIGHT + TIMELINE_BOTTOM_PADDING,
   };
+}
+
+function computeTimelineWindow(flow, dayDate, timeZone) {
+  if (!flow.length) {
+    return {
+      startMinute: 8 * 60,
+      endMinute: 16 * 60,
+      totalMinutes: 8 * 60,
+      hours: Array.from({ length: 9 }, (_, index) => 8 + index),
+      columnCount: 9,
+    };
+  }
+
+  const startMinutes = flow.map((block) => minutesRelativeToDay(block.start_at, dayDate, timeZone));
+  const endMinutes = flow.map((block) => minutesRelativeToDay(block.end_at, dayDate, timeZone));
+  const minimum = Math.min(...startMinutes);
+  const maximum = Math.max(...endMinutes);
+  let startMinute = Math.max(0, Math.floor((minimum - TIMELINE_WINDOW_PADDING_MINUTES) / 60) * 60);
+  let endMinute = Math.min(24 * 60, Math.ceil((maximum + TIMELINE_WINDOW_PADDING_MINUTES) / 60) * 60);
+  const minimumSpanMinutes = TIMELINE_MIN_SPAN_HOURS * 60;
+
+  if (endMinute - startMinute < minimumSpanMinutes) {
+    const missing = minimumSpanMinutes - (endMinute - startMinute);
+    startMinute = Math.max(0, startMinute - Math.ceil(missing / 2));
+    endMinute = Math.min(24 * 60, endMinute + Math.floor(missing / 2));
+    startMinute = Math.floor(startMinute / 60) * 60;
+    endMinute = Math.ceil(endMinute / 60) * 60;
+  }
+
+  if (endMinute - startMinute < minimumSpanMinutes) {
+    if (startMinute === 0) {
+      endMinute = Math.min(24 * 60, startMinute + minimumSpanMinutes);
+    } else {
+      startMinute = Math.max(0, endMinute - minimumSpanMinutes);
+    }
+  }
+
+  if (endMinute <= startMinute) {
+    endMinute = Math.min(24 * 60, startMinute + minimumSpanMinutes);
+  }
+
+  const startHour = Math.floor(startMinute / 60);
+  const endHour = Math.ceil(endMinute / 60);
+  const hours = Array.from({ length: endHour - startHour + 1 }, (_, index) => startHour + index);
+  return {
+    startMinute,
+    endMinute,
+    totalMinutes: Math.max(60, endMinute - startMinute),
+    hours,
+    columnCount: Math.max(2, hours.length),
+  };
+}
+
+function buildTimelineHourMarks(window) {
+  return window.hours.map((hour) => `<span>${String(hour).padStart(2, "0")}</span>`).join("");
+}
+
+function percentFromTimelineMinute(minute, window) {
+  return ((minute - window.startMinute) / Math.max(1, window.totalMinutes)) * 100;
 }
 
 function buildDayFlow(trip, day) {
@@ -2903,8 +3084,8 @@ function microTimelineLabel(title) {
   return compactTimelineLabel(title, 1);
 }
 
-function timelineDensity(block) {
-  const actualWidth = Math.max(4, (durationMinutes(block.start_at, block.end_at) / TIMELINE_TOTAL_MINUTES) * 100);
+function timelineDensity(block, totalMinutes) {
+  const actualWidth = Math.max(4, (durationMinutes(block.start_at, block.end_at) / Math.max(1, totalMinutes)) * 100);
   if (actualWidth < 5.6) return "micro";
   if (actualWidth < 8.4) return "tight";
   if (actualWidth < 11.4) return "compact";
@@ -2930,6 +3111,67 @@ function timelineMinimumWidth(displayTitle, density) {
 function extractAirportCode(value) {
   const match = String(value ?? "").match(/\b([A-Z]{3})\b/u);
   return match ? match[1] : null;
+}
+
+function resolveTripTimeZone(trip) {
+  return trip?.timezone || BROWSER_TIME_ZONE;
+}
+
+function getTimeZoneDateTimeParts(iso, timeZone = BROWSER_TIME_ZONE) {
+  const formatter = getTimeZoneFormatter(timeZone);
+  const parts = formatter.formatToParts(new Date(iso));
+  const partValue = (type) => parts.find((part) => part.type === type)?.value ?? "00";
+  const year = partValue("year");
+  const month = partValue("month");
+  const day = partValue("day");
+  const hour = partValue("hour");
+  const minute = partValue("minute");
+
+  return {
+    date: `${year}-${month}-${day}`,
+    time: `${hour}:${minute}`,
+    hour: Number.parseInt(hour, 10),
+    minute: Number.parseInt(minute, 10),
+  };
+}
+
+function getTimeZoneFormatter(timeZone) {
+  if (!TIME_ZONE_PARTS_FORMATTER_CACHE.has(timeZone)) {
+    TIME_ZONE_PARTS_FORMATTER_CACHE.set(
+      timeZone,
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      })
+    );
+  }
+
+  return TIME_ZONE_PARTS_FORMATTER_CACHE.get(timeZone);
+}
+
+function daysBetweenDateStrings(baseDate, nextDate) {
+  const base = toDateValue(baseDate);
+  const next = toDateValue(nextDate);
+  if (!base || !next) {
+    return 0;
+  }
+
+  return Math.round((next.getTime() - base.getTime()) / 86400000);
+}
+
+function defaultStartTimeForInsertSession(session) {
+  if (session.kind === "meal") {
+    if (session.mealType === "breakfast") return "09:00";
+    if (session.mealType === "dinner") return "18:30";
+    return "12:00";
+  }
+
+  return "10:00";
 }
 
 function escapeHtml(value) {
