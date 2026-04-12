@@ -1,6 +1,6 @@
 {
-  "name": "planner-workspace",
-  "description": "AI-assisted itinerary editor with map, schedule, and assistant-driven planning.",
+  "name": "itinerary-workspace",
+  "description": "AI-assisted travel planning workspace with map, timeline, and natural-language itinerary editing.",
   "private": true,
   "license": "MIT",
   "type": "module",

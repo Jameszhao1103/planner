@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for contributing to Planner Workspace.
+Thanks for contributing to Itinerary Workspace.
 
 This project is still evolving quickly, so the most useful contributions are the ones that improve correctness, clarity, and the editing experience without fighting the current architecture.
 

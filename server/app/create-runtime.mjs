@@ -45,7 +45,7 @@ export async function createRuntime() {
     enabled: observability.logRequests,
     level: observability.logLevel,
     bindings: {
-      app: "planner-workspace",
+      app: "itinerary-workspace",
     },
   });
   const metrics = new RuntimeMetrics();

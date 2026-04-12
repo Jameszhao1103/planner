@@ -2,7 +2,7 @@
 
 ## Our Pledge
 
-We want Planner Workspace to be an open, practical, and respectful project.
+We want Itinerary Workspace to be an open, practical, and respectful project.
 
 Contributors, maintainers, and participants are expected to make participation in this project a harassment-free experience for everyone, regardless of age, body size, disability, ethnicity, gender identity and expression, level of experience, nationality, personal appearance, race, religion, or sexual identity and orientation.
 

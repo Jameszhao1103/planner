@@ -10,7 +10,7 @@ export function buildCalendarExport(
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//Planner Workspace//Itinerary Export//EN",
+    "PRODID:-//Itinerary Workspace//Itinerary Export//EN",
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
     ...days.flatMap((day) => buildCalendarEvents(itinerary, day)),
@@ -213,7 +213,7 @@ function buildCalendarEvents(itinerary: Itinerary, day: ItineraryDay): string[] 
 
       return [
         "BEGIN:VEVENT",
-        `UID:${escapeIcsText(`${itinerary.trip_id}-${item.id}@planner-workspace`)}`,
+        `UID:${escapeIcsText(`${itinerary.trip_id}-${item.id}@itinerary-workspace`)}`,
         `DTSTAMP:${formatUtcStamp(new Date())}`,
         `DTSTART:${formatUtcStamp(new Date(item.start_at))}`,
         `DTEND:${formatUtcStamp(new Date(item.end_at))}`,

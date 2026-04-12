@@ -1,97 +1,57 @@
-# Planner Workspace
+# Itinerary Workspace
 
-Planner Workspace is an AI-assisted itinerary editor for travel planning.
+AI-assisted travel planning workspace with a map, timeline, and natural-language itinerary edits.
 
-Instead of generating a trip once and freezing it, this project treats a trip as a shared editable workspace. The same itinerary state drives every surface:
+This project explores a different UX from the usual one-shot trip generator. Instead of producing an itinerary once and freezing it, the app treats a trip as a shared editable workspace where every surface stays in sync:
 
 - `Map` explains where the day moves spatially
 - `Schedule` switches between `Timeline` and `Plan`
-- `Selection` gives direct item editing tools
-- `Assistant` turns natural language into itinerary mutations
+- `Selection` gives direct editing controls for the focused stop
+- `Assistant` turns natural language into previewable itinerary mutations
 
-The product goal is simple: let AI generate and revise a realistic plan without taking control away from the user.
+The goal is simple: let AI help with travel planning without taking control away from the user.
 
-## Screenshots
+## Screenshot
 
-### Current workspace UI
+![Itinerary Workspace current UI](docs/screenshots/workspace-current-ui.png)
 
-![Planner Workspace current UI](docs/screenshots/workspace-current-ui.png)
+## Highlights
 
-## Current MVP
+- interactive day-by-day itinerary workspace
+- synchronized `Map`, `Timeline`, `Plan`, and `Selection` views
+- direct edits for lock, unlock, move, reorder, and timeline drag
+- preview / apply / reject flow for assistant-generated changes
+- replace and insert places through search + diff previews
+- route and opening-hours validation
+- conflict repair previews for overlap, travel-time, meal-gap, and pacing issues
+- multi-step undo / redo for direct edits
+- `.ics` calendar export and print-friendly HTML export
+- mock providers for fast local work and real Google + OpenAI integrations for live validation
 
-What works today:
+## Why This Repo Exists
 
-- Global day switcher
-- Interactive map with stop markers and route polylines
-- Schedule panel with `Timeline / Plan` toggle
-- Selection panel for focused editing
-- Assistant preview / apply / reject flow
-- Direct edits for small changes:
-  - lock / unlock
-  - move in time
-  - reorder
-  - timeline drag
-- Multi-step undo / redo for direct edits
-- Replace a place through search + preview
-- Add a place before / after the selected item through search + preview
-- Three-view synchronization:
-  - click `Map`, `Timeline`, or `Plan`
-  - the same item is focused everywhere
-- Route and opening-hours validation
-- Conflict repair previews for supported issues:
-  - overlap
-  - travel time underestimated
-  - missing lunch / dinner
-  - packed day / long walk segments
-- File-backed trip persistence for local development
-- Lightweight observability:
-  - structured request logs
-  - runtime metrics
-  - Places / Routes response caching
-- Export support:
-  - `.ics` for Apple Calendar and other calendar apps
-  - print-friendly HTML for browser or system “Save as PDF”
-- Real provider support:
-  - Google Places + Routes
-  - OpenAI command translation
+Most travel tools either:
 
-## UI Shape
+- generate a static trip once
+- optimize an itinerary behind the scenes
+- or expose a form-heavy editor with little assistance
 
-The current layout is:
+This repo is an attempt at a middle ground: an itinerary editor where AI can propose meaningful structural changes, but every change still goes through an explicit preview and the itinerary remains inspectable, editable, and deterministic.
 
-- Left: `Map`
-- Right top: `Schedule`
-- Right bottom: `Workspace`
+## Product Model
 
-`Schedule` contains:
-
-- `Timeline`
-- `Plan`
-
-`Workspace` contains:
-
-- `Selection`
-- `Assistant`
-
-This keeps the time-related views together while preserving a separate work area for editing and AI actions.
-
-## How It Works
-
-The system uses one itinerary object as the source of truth.
-
-That state contains:
+One itinerary object is the source of truth for the whole app. That canonical state contains:
 
 - trip metadata
-- days and items
-- places
-- routes
-- conflicts
+- days and itinerary items
+- places and routes
+- conflicts and validation output
 - markdown / text sections
-- change log
+- change history
 
 From there, the app derives:
 
-- map markers and polylines
+- map markers and route polylines
 - timeline blocks
 - plan rows
 - conflict badges
@@ -99,11 +59,59 @@ From there, the app derives:
 
 Typical flow:
 
-1. User selects a day.
-2. User edits directly or asks the assistant for a change.
-3. The planner resolves commands.
+1. The user selects a day or stop.
+2. The user edits directly or asks for a change in natural language.
+3. The planner resolves the command into structured mutations.
 4. The engine recomputes routes, gaps, and conflicts.
-5. `Map`, `Schedule`, and `Selection` all re-render from the same updated itinerary.
+5. The same itinerary version re-renders the `Map`, `Schedule`, `Selection`, and `Assistant`.
+
+## Architecture At A Glance
+
+- `public/`: browser UI built as a lightweight workspace shell
+- `server/app/`: HTTP server, runtime wiring, routes, and environment handling
+- `server/planner/`: planner engine, derivations, command execution, export, and repositories
+- `server/integrations/google/`: Google Places and Routes adapters
+- `server/integrations/mock/`: fast mock adapters for local development
+- `server/integrations/cache/`: in-process adapter caching
+- `schemas/`: itinerary and planner command contracts
+- `docs/`: design notes, architecture, API contracts, and engine docs
+
+## Tech Stack
+
+- Node.js 24+
+- ESM app server
+- vanilla web frontend in `public/`
+- TypeScript planner modules shared across runtime layers
+- Google Maps / Places / Routes integration
+- OpenAI-based command translation with rule-based fallback
+- file-backed local persistence for the current MVP
+
+## Quick Start
+
+### Requirements
+
+- Node.js 24+
+- no database required for the current MVP
+
+### Run locally
+
+```bash
+cp .env.example .env.local
+npm run dev
+```
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+### Run tests
+
+```bash
+npm test
+node --check public/app.js
+```
 
 ## Runtime Modes
 
@@ -118,7 +126,7 @@ Uses:
 - mock Routes adapter
 - rule-based translator unless OpenAI is configured
 
-This is the fastest way to work on UI and planner behavior.
+This is the fastest way to iterate on workspace behavior.
 
 ### Real API mode
 
@@ -126,134 +134,36 @@ Uses:
 
 - Google Places
 - Google Routes
-- OpenAI command planner
+- OpenAI command translation
 
-This is useful for validating live place search, routing, and natural-language mutation behavior.
+Useful for validating live search, routing, and natural-language mutation behavior.
 
-## Quick Start
-
-### Requirements
-
-- Node.js 24+
-- no database required for the current MVP
-- local persistence uses JSON files under `.data/` by default
-
-### Run locally
-
-```bash
-npm run dev
-```
-
-Then open:
-
-```text
-http://localhost:3000
-```
-
-### Run tests
-
-```bash
-npm test
-node --check public/app.js
-```
-
-## Environment Setup
-
-The runtime reads environment values from shell env or `.env.local`.
-
-An example file is included:
-
-```bash
-cp .env.example .env.local
-```
-
-### Google configuration
-
-For real Google providers, use two different keys:
+Key environment variables:
 
 ```bash
 GOOGLE_MAPS_API_KEY=your_server_key
 GOOGLE_MAPS_BROWSER_API_KEY=your_browser_key
 PLANNER_PROVIDER=google
-```
-
-Notes:
-
-- `GOOGLE_MAPS_API_KEY` is for server-side Places / Routes calls
-- `GOOGLE_MAPS_BROWSER_API_KEY` is for the browser map only
-- the browser key should be restricted by HTTP referrer
-- the server key should be restricted by API and server environment
-- the runtime no longer falls back from browser key to server key
-
-If you only set the server key, Google Places / Routes can still run, but the browser map will not load live Google tiles.
-
-### Storage and observability
-
-```bash
-PLANNER_STORAGE_MODE=file
-PLANNER_DATA_DIR=.data/trips
-PLANNER_ENABLE_DEBUG_ROUTES=0
-PLANNER_LOG_REQUESTS=1
-PLANNER_LOG_LEVEL=info
-PLANNER_CACHE_TTL_MS=300000
-PLANNER_PLACE_DETAILS_CACHE_TTL_MS=1800000
-```
-
-Notes:
-
-- `PLANNER_STORAGE_MODE=file` persists the canonical trip locally between restarts
-- `PLANNER_STORAGE_MODE=memory` restores the old demo-style ephemeral runtime
-- `PLANNER_ENABLE_DEBUG_ROUTES=1` exposes local-only debug routes and the `Reset sample trip` button
-- debug routes are disabled by default and should stay off for public deployments
-- request logs are JSON lines written to stdout
-- Places / Routes calls are cached in-process to reduce repeated API spend during iteration
-
-### OpenAI configuration
-
-```bash
 OPENAI_API_KEY=your_openai_key
 OPENAI_MODEL=gpt-4.1-mini
 PLANNER_COMMAND_TRANSLATOR=openai
 ```
 
-Notes:
-
-- if `OPENAI_API_KEY` is present, the runtime can infer the OpenAI translator automatically
-- if OpenAI fails, the system falls back to the rule-based translator
-
-## Real API Validation
-
-Smoke test Google adapters:
-
-```bash
-npm run test:google
-```
-
-Then run the app:
-
-```bash
-npm run dev
-```
-
-Useful live checks:
-
-- map loads live Google tiles when `GOOGLE_MAPS_BROWSER_API_KEY` is set
-- assistant requests produce preview diffs against real providers
-- if `PLANNER_ENABLE_DEBUG_ROUTES=1`, `GET /api/debug/runtime` reports provider / storage / cache state
+Additional storage, logging, and cache settings are documented in [.env.example](./.env.example).
 
 ## Example Assistant Requests
 
-- `把当前这天的晚餐换成评分高一点的美式餐厅`
-- `锁定第一天的 River Arts District walk`
-- `把第一天的 River Arts District walk 往后挪 30 分钟`
-- `reoptimize the current day`
+- `replace dinner with a better-rated American restaurant`
+- `move the current stop 30 minutes later`
 - `add lunch near the current route`
+- `reoptimize the current day`
+- `把当前这天的晚餐换成评分高一点的美式餐厅`
 
-The important detail is that assistant requests are translated into structured planner commands before execution.
+The important detail is that assistant requests are translated into structured planner commands before execution. The assistant never mutates the trip directly without going through the planner pipeline.
 
 ## API Shape
 
-Main local API routes:
+Main local routes:
 
 - `GET /api/trips/:tripId`
 - `GET /api/places/search`
@@ -264,117 +174,55 @@ Main local API routes:
 - `GET /api/trips/:tripId/export/ics`
 - `GET /trips/:tripId/print`
 
-Debug routes are optional and disabled by default:
+Optional debug routes:
 
 - `POST /api/debug/reset`
 - `GET /api/debug/runtime`
 - `GET /api/debug/metrics`
 
-There are two mutation paths:
+## Repository Guide
 
-1. `preview -> apply / reject`
-   Use for AI changes and larger edits such as replace / insert.
-2. `execute`
-   Use for direct user edits such as lock, move, reorder, and undo.
-
-## Export and Sharing
-
-The current export path is intentionally pragmatic:
-
-- `Export ICS` downloads a standards-based `.ics` file that Apple Calendar can import directly
-- `Print / Save PDF` opens a print-friendly HTML view; use your browser or system print dialog to save it as PDF
-
-This avoids pulling in a heavy PDF generation stack while still producing a format users can actually keep and share.
-
-## Repository Structure
-
-### Frontend
-
-- `public/index.html`
-- `public/app.js`
-- `public/app.css`
-
-### App server
-
-- `server/app/create-server.mjs`
-- `server/app/dev-server.mjs`
-- `server/app/app-router.mjs`
-- `server/app/create-runtime.mjs`
-- `server/app/runtime-config.mjs`
-
-### Planner engine
-
-- `server/planner/planner-service.ts`
-- `server/planner/command-executor.ts`
-- `server/planner/derivations.ts`
-- `server/planner/export.ts`
-- `server/planner/repositories.ts`
-
-## Current Limits
-
-- persistence is file-backed for now, not yet multi-user or database-backed
-- metrics are process-local and reset when the server restarts
-- debug routes are local-development tools and stay off unless explicitly enabled
-- PDF export is currently print-to-PDF, not headless server-side PDF rendering
-- calendar export skips synthetic transit/buffer blocks to keep calendars readable
-
-### Translators
-
-- `server/planner/openai-command-translator.ts`
-- `server/planner/rule-based-command-translator.ts`
-- `server/planner/fallback-command-translator.ts`
-
-### Providers
-
-- `server/integrations/google/`
-- `server/integrations/mock/`
-
-### Demo data
-
-- `server/demo/sample-trip.ts`
-
-### Tests
-
-- `tests/`
-
-Current automated coverage includes:
-
-- app routing
-- planner preview / apply / execute flows
-- undo generation
-- insert-before / insert-after behavior
-- translator normalization
-- sample trip baseline validity
-
-## Current Limitations
-
-This repo is still an MVP / prototype.
-
-Known gaps:
-
-- persistence is in-memory, not database-backed
-- no auth or multi-user model
-- planner optimization is heuristic, not a full solver
-- Google and OpenAI usage still needs cost controls and stronger observability
-- UI is functional but not yet production-polished
+- `public/index.html`, `public/app.js`, `public/app.css`: workspace UI
+- `server/app/create-server.mjs`: server bootstrap
+- `server/app/app-router.mjs`: route wiring
+- `server/app/create-runtime.mjs`: runtime composition
+- `server/planner/planner-service.ts`: orchestration entrypoint
+- `server/planner/command-executor.ts`: mutation execution path
+- `server/planner/derivations.ts`: recomputation and derived state
+- `server/planner/export.ts`: calendar and printable exports
+- `tests/`: runtime and planner coverage
 
 ## Design Docs
 
-Additional docs:
+- [Itinerary workspace notes](./docs/itinerary-workspace.md)
+- [Planner commands](./docs/planner-commands.md)
+- [System architecture](./docs/system-architecture.md)
+- [API contracts](./docs/api-contracts.md)
+- [Frontend store](./docs/frontend-store.md)
+- [Google adapters](./docs/google-adapters.md)
+- [Planner engine](./docs/planner-engine.md)
 
-- `docs/itinerary-workspace.md`
-- `docs/planner-commands.md`
-- `docs/system-architecture.md`
-- `docs/api-contracts.md`
-- `docs/frontend-store.md`
-- `docs/google-adapters.md`
-- `docs/planner-engine.md`
+Schemas and sample data:
 
-Schemas and examples:
+- [Itinerary schema](./schemas/itinerary.schema.json)
+- [Planner command schema](./schemas/planner-command.schema.json)
+- [Sample itinerary](./examples/sample-itinerary.json)
 
-- `schemas/itinerary.schema.json`
-- `schemas/planner-command.schema.json`
-- `examples/sample-itinerary.json`
+## Current Status
+
+This repo is still an MVP / prototype. The current implementation is strongest as:
+
+- a product prototype for editable AI trip planning
+- a reference implementation of previewable planner commands
+- a playground for integrating places, routing, validation, and assistant-driven edits in one workspace
+
+Known gaps:
+
+- no auth or multi-user model yet
+- file-backed persistence instead of a production database
+- heuristic planner behavior instead of a full optimization solver
+- provider usage still needs stronger cost controls and observability
+- UI is functional but not yet production-polished
 
 ## License
 
