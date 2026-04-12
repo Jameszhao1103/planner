@@ -67,6 +67,20 @@ Typical flow:
 
 ## Architecture At A Glance
 
+```mermaid
+flowchart LR
+    UI["Browser Workspace"] --> Server["Node App Server"]
+    Server --> Planner["Planner Service"]
+    Planner --> TripRepo["Trip Repository<br/>file or memory"]
+    Planner --> PreviewRepo["Preview Repository"]
+    Planner --> Translator["Command Translator<br/>OpenAI or rules"]
+    Planner --> PlacesCache["Cached Places Adapter"]
+    Planner --> RoutesCache["Cached Routes Adapter"]
+    Planner --> Export["ICS / Print Export"]
+    PlacesCache --> PlacesProvider["Google Places or Mock Places"]
+    RoutesCache --> RoutesProvider["Google Routes or Mock Routes"]
+```
+
 - `public/`: browser UI built as a lightweight workspace shell
 - `server/app/`: HTTP server, runtime wiring, routes, and environment handling
 - `server/planner/`: planner engine, derivations, command execution, export, and repositories
