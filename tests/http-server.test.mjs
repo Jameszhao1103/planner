@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readJsonBody } from "../server/app/create-server.mjs";
+import { readJsonBody, resolvePublicAssetPath } from "../server/app/create-server.mjs";
 import { createRuntime } from "../server/app/create-runtime.mjs";
 import { handleAppRequest, toErrorResponse } from "../server/app/app-router.mjs";
 
@@ -115,6 +115,16 @@ test("server returns 413 for oversized JSON bodies", async () => {
       error.code === "request_too_large" &&
       /exceeds/i.test(error.message)
   );
+});
+
+test("static asset resolver allows nested public modules", () => {
+  const resolved = resolvePublicAssetPath("/app/main.js");
+  assert.ok(resolved?.endsWith("/public/app/main.js"));
+});
+
+test("static asset resolver rejects path traversal", () => {
+  assert.equal(resolvePublicAssetPath("/../package.json"), null);
+  assert.equal(resolvePublicAssetPath("/..%2Fpackage.json"), null);
 });
 
 test("app router exposes trip load, preview, and execute endpoints", async () => {

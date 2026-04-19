@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join } from "node:path";
+import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildCalendarExport, buildPrintableDocument } from "../planner/index.ts";
 import { PlannerError } from "../planner/errors.ts";
@@ -21,14 +21,7 @@ export async function createAppServer() {
     const pathname = url.pathname;
 
     try {
-      if (method === "GET" && pathname === "/") {
-        await serveStatic(response, "index.html");
-        recordRuntimeRequest(runtime, method, pathname, 200, startedAt);
-        return;
-      }
-
-      if (method === "GET" && (pathname === "/app.js" || pathname === "/app.css")) {
-        await serveStatic(response, pathname.slice(1));
+      if (method === "GET" && await tryServeStatic(response, pathname)) {
         recordRuntimeRequest(runtime, method, pathname, 200, startedAt);
         return;
       }
@@ -116,13 +109,67 @@ export async function createAppServer() {
 }
 
 async function serveStatic(response, fileName) {
-  const filePath = join(PUBLIC_DIR, fileName);
+  const filePath = resolvePublicAssetPath(fileName);
+  if (!filePath) {
+    const error = new Error(`Static asset not found: ${fileName}`);
+    error.code = "not_found";
+    throw error;
+  }
+
   const content = await readFile(filePath);
   response.writeHead(200, {
     "Content-Type": contentTypeFor(filePath),
     "Cache-Control": "no-store",
   });
   response.end(content);
+}
+
+async function tryServeStatic(response, pathname) {
+  const filePath = resolvePublicAssetPath(pathname);
+  if (!filePath) {
+    return false;
+  }
+
+  try {
+    const content = await readFile(filePath);
+    response.writeHead(200, {
+      "Content-Type": contentTypeFor(filePath),
+      "Cache-Control": "no-store",
+    });
+    response.end(content);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "EISDIR") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+export function resolvePublicAssetPath(pathname) {
+  if (!pathname) {
+    return null;
+  }
+
+  const normalizedPath = pathname === "/" ? "/index.html" : pathname;
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(normalizedPath);
+  } catch {
+    return null;
+  }
+
+  const relativePath = decodedPath.replace(/^\/+/, "");
+  if (!relativePath) {
+    return null;
+  }
+
+  const candidatePath = resolve(PUBLIC_DIR, relativePath);
+  if (candidatePath !== PUBLIC_DIR && !candidatePath.startsWith(`${PUBLIC_DIR}${sep}`)) {
+    return null;
+  }
+
+  return candidatePath;
 }
 
 export async function readJsonBody(request) {
