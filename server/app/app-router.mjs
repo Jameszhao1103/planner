@@ -18,6 +18,23 @@ export async function handleAppRequest(runtime, request) {
     });
   }
 
+  if (request.method === "POST" && pathname === "/api/trips/intake/parse") {
+    const result = await runtime.plannerService.parseTripIntake({
+      sourceText: request.body.source_text,
+      clarificationText: request.body.clarification_text,
+      knownDraft: request.body.known_draft,
+      knownItinerary: request.body.known_itinerary,
+    });
+
+    return json(200, {
+      ok: true,
+      data: result,
+      meta: {
+        request_id: randomUUID(),
+      },
+    });
+  }
+
   if (request.method === "POST" && pathname === "/api/trips") {
     const result = await runtime.plannerService.createTrip({
       title: request.body.title,
@@ -25,6 +42,7 @@ export async function handleAppRequest(runtime, request) {
       endDate: request.body.end_date,
       timezone: request.body.timezone,
       travelerCount: request.body.traveler_count,
+      importDraft: request.body.import_draft,
     });
 
     return json(201, {

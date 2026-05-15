@@ -5,6 +5,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "check:js": "node scripts/check-js.mjs",
     "dev": "node server/app/dev-server.mjs",
     "test": "node --test tests/*.test.mjs",
     "test:google": "node scripts/test-google-api.mjs"

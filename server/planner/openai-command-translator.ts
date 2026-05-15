@@ -1,5 +1,13 @@
 import { PlannerError } from "./errors.ts";
 import { createId } from "./ids.ts";
+import {
+  extractStructuredPayload,
+  nullableBooleanSchema,
+  nullableEnumSchema,
+  nullableNumberSchema,
+  nullableStringSchema,
+  safeReadText,
+} from "./openai-structured-output.ts";
 import type {
   Itinerary,
   PlannerCommand,
@@ -222,7 +230,10 @@ export class OpenAiCommandTranslator implements PlannerCommandTranslator {
     }
 
     const payload = await response.json();
-    const parsed = extractStructuredPayload(payload);
+    const parsed = extractStructuredPayload(payload, {
+      missingPayload: "OpenAI command planner returned no structured payload.",
+      invalidJson: "OpenAI command planner returned invalid JSON.",
+    });
     return normalizePlannerCommands(parsed?.commands, input.trip, utterance, input.context);
   }
 }
@@ -272,60 +283,6 @@ function buildUserPrompt(trip: Itinerary, utterance: string, context?: PlannerCo
       2
     ),
   ].join("\n");
-}
-
-function extractStructuredPayload(payload: unknown): Record<string, unknown> {
-  if (payload && typeof payload === "object") {
-    const candidate = payload as {
-      output_parsed?: unknown;
-      output_text?: unknown;
-      output?: Array<{
-        content?: Array<{
-          type?: string;
-          text?: string;
-          json?: unknown;
-        }>;
-      }>;
-    };
-
-    if (candidate.output_parsed && typeof candidate.output_parsed === "object") {
-      return candidate.output_parsed as Record<string, unknown>;
-    }
-
-    if (typeof candidate.output_text === "string" && candidate.output_text.trim()) {
-      return parseJsonPayload(candidate.output_text);
-    }
-
-    if (Array.isArray(candidate.output)) {
-      for (const block of candidate.output) {
-        for (const content of block.content ?? []) {
-          if (content?.json && typeof content.json === "object") {
-            return content.json as Record<string, unknown>;
-          }
-
-          if (typeof content?.text === "string" && content.text.trim()) {
-            return parseJsonPayload(content.text);
-          }
-        }
-      }
-    }
-  }
-
-  throw new PlannerError("translator_unavailable", "OpenAI command planner returned no structured payload.");
-}
-
-function parseJsonPayload(text: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(text);
-    if (!parsed || typeof parsed !== "object") {
-      throw new Error("Parsed payload was not an object.");
-    }
-    return parsed as Record<string, unknown>;
-  } catch (error) {
-    throw new PlannerError("translator_unavailable", "OpenAI command planner returned invalid JSON.", {
-      cause: error instanceof Error ? error.message : String(error),
-    });
-  }
 }
 
 function normalizePlannerCommands(
@@ -627,42 +584,4 @@ function normalizeText(value: string): string {
 
 function includesAny(value: string, tokens: string[]): boolean {
   return tokens.some((token) => value.includes(token));
-}
-
-async function safeReadText(response: Response): Promise<string> {
-  try {
-    return await response.text();
-  } catch (_error) {
-    return "";
-  }
-}
-
-function nullableStringSchema() {
-  return {
-    anyOf: [{ type: "string" }, { type: "null" }],
-  };
-}
-
-function nullableNumberSchema() {
-  return {
-    anyOf: [{ type: "number" }, { type: "null" }],
-  };
-}
-
-function nullableBooleanSchema() {
-  return {
-    anyOf: [{ type: "boolean" }, { type: "null" }],
-  };
-}
-
-function nullableEnumSchema(values: string[]) {
-  return {
-    anyOf: [
-      {
-        type: "string",
-        enum: values,
-      },
-      { type: "null" },
-    ],
-  };
 }

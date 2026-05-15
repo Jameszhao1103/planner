@@ -1,12 +1,15 @@
 import { resolve } from "node:path";
 import {
   FallbackCommandTranslator,
+  FallbackTripIntakeParser,
   FileTripRepository,
   InMemoryPreviewRepository,
   InMemoryTripRepository,
   OpenAiCommandTranslator,
+  OpenAiTripIntakeParser,
   PlannerService,
   recomputeDerivedState,
+  RuleBasedTripIntakeParser,
 } from "../planner/index.ts";
 import { RuleBasedCommandTranslator } from "../planner/rule-based-command-translator.ts";
 import { MockPlacesAdapter, MockRoutesAdapter } from "../integrations/mock/index.ts";
@@ -96,6 +99,7 @@ export async function createRuntime() {
   }
   const previewRepository = new InMemoryPreviewRepository();
   const ruleTranslator = new RuleBasedCommandTranslator();
+  const ruleTripIntakeParser = new RuleBasedTripIntakeParser();
   const commandTranslator =
     commandPlannerMode === "openai" && openAiConfig.apiKey
       ? new FallbackCommandTranslator(
@@ -107,12 +111,23 @@ export async function createRuntime() {
           ruleTranslator
         )
       : ruleTranslator;
+  const tripIntakeParser = openAiConfig.apiKey
+    ? new FallbackTripIntakeParser(
+        new OpenAiTripIntakeParser({
+          apiKey: openAiConfig.apiKey,
+          model: openAiConfig.model,
+          baseUrl: openAiConfig.baseUrl,
+        }),
+        ruleTripIntakeParser
+      )
+    : ruleTripIntakeParser;
   const assistantProvider =
     commandPlannerMode === "openai" && openAiConfig.apiKey ? "openai" : "rules";
   const plannerService = new PlannerService(tripRepository, previewRepository, {
     placesAdapter,
     routesAdapter,
     commandTranslator,
+    tripIntakeParser,
     clock: () => new Date(),
   });
 

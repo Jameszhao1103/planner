@@ -25,5 +25,5 @@ jobs:
       - name: Run unit tests
         run: npm test
 
-      - name: Check browser bundle syntax
-        run: node --check public/app.js
+      - name: Check JavaScript syntax
+        run: npm run check:js

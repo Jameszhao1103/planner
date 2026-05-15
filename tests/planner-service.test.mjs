@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRuntime } from "../server/app/create-runtime.mjs";
-import { recomputeDerivedState } from "../server/planner/index.ts";
+import {
+  InMemoryPreviewRepository,
+  InMemoryTripRepository,
+  PlannerService,
+  recomputeDerivedState,
+} from "../server/planner/index.ts";
+import { MockPlacesAdapter, MockRoutesAdapter } from "../server/integrations/mock/index.ts";
 
 async function withMockRuntime(run) {
   const previousProvider = process.env.PLANNER_PROVIDER;
@@ -272,6 +278,201 @@ test("direct execute rejects utterance input", async () => {
     );
   });
 });
+
+test("imported itinerary place hydration skips ambiguous matches and reuses airport and lodging anchors", async () => {
+  const catalog = [
+    manualPlace({
+      place_id: "place_jac",
+      name: "Jackson Hole Airport",
+      category: "airport",
+      lat: 43.6073,
+      lng: -110.7377,
+      address: "1250 E Airport Rd, Jackson, WY 83001",
+    }),
+    manualPlace({
+      place_id: "place_moran_lodge",
+      name: "Moran Lodge",
+      category: "hotel",
+      lat: 44.743,
+      lng: -110.487,
+      address: "Yellowstone National Park, WY 82190",
+    }),
+    manualPlace({
+      place_id: "place_old_faithful",
+      name: "Old Faithful - Observation Deck",
+      category: "landmark",
+      lat: 44.4595,
+      lng: -110.8281,
+      address: "Yellowstone National Park, WY 82190",
+    }),
+    manualPlace({
+      place_id: "place_upper_geyser",
+      name: "Upper Geyser Basin",
+      category: "landmark",
+      lat: 44.46,
+      lng: -110.8292,
+      address: "Yellowstone National Park, WY 82190",
+    }),
+    manualPlace({
+      place_id: "place_grand_prismatic",
+      name: "Grand Prismatic Spring",
+      category: "landmark",
+      lat: 44.5251,
+      lng: -110.8382,
+      address: "Yellowstone National Park, WY 82190",
+    }),
+    manualPlace({
+      place_id: "place_canyon",
+      name: "Canyon Visitor Education Center",
+      category: "landmark",
+      lat: 44.7281,
+      lng: -110.4972,
+      address: "Yellowstone National Park, WY 82190",
+    }),
+    manualPlace({
+      place_id: "place_hanks",
+      name: "Hanks Chop Shop",
+      category: "restaurant",
+      lat: 44.6632,
+      lng: -111.0994,
+      address: "221 N Canyon St, West Yellowstone, MT 59758",
+      rating: 4.6,
+    }),
+    manualPlace({
+      place_id: "place_yellowstone_centroid",
+      name: "Yellowstone National Park",
+      category: "park",
+      lat: 44.5979,
+      lng: -110.5612,
+      address: "United States",
+      rating: 4.8,
+    }),
+    manualPlace({
+      place_id: "place_norris",
+      name: "Norris Geyser Basin Trailhead",
+      category: "landmark",
+      lat: 44.7374,
+      lng: -110.6983,
+      address: "Yellowstone National Park, WY 82190",
+      rating: 4.7,
+    }),
+  ];
+
+  const plannerService = new PlannerService(
+    new InMemoryTripRepository(),
+    new InMemoryPreviewRepository(),
+    {
+      placesAdapter: new MockPlacesAdapter(catalog),
+      routesAdapter: new MockRoutesAdapter(catalog),
+      clock: () => new Date("2026-03-30T21:00:00-04:00"),
+    }
+  );
+
+  const created = await plannerService.createTrip({
+    title: "Yellowstone Imported",
+    startDate: "2026-06-16",
+    endDate: "2026-06-18",
+    timezone: "America/Denver",
+    travelerCount: 2,
+    importDraft: {
+      pace: "balanced",
+      days: [
+        {
+          day_index: 1,
+          items: [
+            {
+              title: "Arrive at Jackson Hole Airport (JAC)",
+              kind: "flight",
+            },
+            {
+              title: "Check in at Moran Lodge",
+              kind: "check_in",
+            },
+          ],
+        },
+        {
+          day_index: 2,
+          items: [
+            {
+              title: "Early entry to Yellowstone park",
+              kind: "activity",
+            },
+            {
+              title: "Visit Old Faithful Geyser",
+              kind: "activity",
+            },
+            {
+              title: "Explore Upper Geyser Basin",
+              kind: "activity",
+            },
+            {
+              title: "Lunch",
+              kind: "meal",
+              category: "lunch",
+            },
+            {
+              title: "Visit Midway Geyser Basin (Grand Prismatic Spring)",
+              kind: "activity",
+            },
+            {
+              title: "Optional visit Norris Geyser Basin based on energy",
+              kind: "activity",
+            },
+          ],
+        },
+        {
+          day_index: 3,
+          items: [
+            {
+              title: "Check out from Yellowstone lodging",
+              kind: "check_out",
+              category: "lodging",
+            },
+            {
+              title: "Return rental car and check in for flight",
+              kind: "check_out",
+              category: "airport",
+            },
+          ],
+        },
+      ],
+    },
+  });
+
+  const trip = created.trip;
+  const day2 = trip.days.find((day) => day.date === "2026-06-17");
+  const day3 = trip.days.find((day) => day.date === "2026-06-18");
+  assert.ok(day2);
+  assert.ok(day3);
+
+  const earlyEntry = day2.items.find((item) => item.title === "Early entry to Yellowstone park");
+  const oldFaithful = day2.items.find((item) => item.title === "Visit Old Faithful Geyser");
+  const lunch = day2.items.find((item) => item.title === "Lunch");
+  const grandPrismatic = day2.items.find((item) => item.title === "Visit Midway Geyser Basin (Grand Prismatic Spring)");
+  const optionalNorris = day2.items.find((item) => item.title === "Optional visit Norris Geyser Basin based on energy");
+  const checkOut = day3.items.find((item) => item.title === "Check out from Yellowstone lodging");
+  const flightReturn = day3.items.find((item) => item.title === "Return rental car and check in for flight");
+
+  assert.equal(earlyEntry?.place_id, undefined);
+  assert.equal(oldFaithful?.place_id, "place_old_faithful");
+  assert.equal(lunch?.place_id, undefined);
+  assert.equal(grandPrismatic?.place_id, "place_grand_prismatic");
+  assert.equal(optionalNorris?.place_id, undefined);
+  assert.equal(checkOut?.place_id, "place_moran_lodge");
+  assert.equal(flightReturn?.place_id, "place_jac");
+  assert.ok(!trip.places.some((place) => place.place_id === "place_hanks"));
+});
+
+function manualPlace(overrides) {
+  return {
+    provider: "manual",
+    rating: undefined,
+    price_level: undefined,
+    opening_hours: undefined,
+    maps_uri: undefined,
+    ...overrides,
+  };
+}
 
 test("direct execute can delete an item and undo by restoring it", async () => {
   await withMockRuntime(async (runtime) => {

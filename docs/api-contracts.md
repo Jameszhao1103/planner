@@ -55,6 +55,40 @@ Returns the full workspace payload needed for the first render.
 }
 ```
 
+### `POST /api/trips/intake/parse`
+
+Extracts `Create Trip` fields from a pasted travel brief and reports any missing values.
+
+Request:
+
+```json
+{
+  "source_text": "6月、5天、Jackson 进出、第一次去也比较稳"
+}
+```
+
+Response:
+
+```json
+{
+  "draft": {
+    "title": "Jackson Trip",
+    "start_date": null,
+    "end_date": null,
+    "timezone": "America/Denver",
+    "traveler_count": null
+  },
+  "derived": {
+    "duration_days": 5
+  },
+  "blocking_missing_fields": [
+    "start_date",
+    "end_date"
+  ],
+  "can_create": false
+}
+```
+
 ### `POST /api/trips`
 
 Creates a new trip shell before itinerary generation.
@@ -66,7 +100,26 @@ Request:
   "title": "Asheville Long Weekend",
   "timezone": "America/New_York",
   "start_date": "2026-04-12",
-  "end_date": "2026-04-14"
+  "end_date": "2026-04-14",
+  "import_draft": {
+    "pace": "balanced",
+    "days": [
+      {
+        "day_index": 1,
+        "summary": "Arrival and downtown walk.",
+        "items": [
+          {
+            "title": "Arrive in Asheville",
+            "kind": "flight",
+            "start_time": "09:10",
+            "end_time": "10:45",
+            "status": "confirmed",
+            "locked": true
+          }
+        ]
+      }
+    ]
+  }
 }
 ```
 

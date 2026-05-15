@@ -255,6 +255,93 @@ export type PlannerCreateTripRequest = {
   endDate: string;
   timezone: string;
   travelerCount?: number;
+  importDraft?: TripImportedItineraryDraft | null;
+};
+
+export type TripIntakeField =
+  | "title"
+  | "start_date"
+  | "end_date"
+  | "timezone"
+  | "traveler_count";
+
+export type TripIntakeDraft = {
+  title?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  timezone?: string | null;
+  traveler_count?: number | null;
+};
+
+export type TripIntakeDerived = {
+  duration_days?: number | null;
+};
+
+export type TripImportedItemDraft = {
+  title?: string | null;
+  kind?: string | null;
+  category?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  duration_minutes?: number | null;
+  status?: string | null;
+  locked?: boolean | null;
+  subtitle?: string | null;
+  notes?: string | null;
+  tags?: string[] | null;
+};
+
+export type TripImportedDayDraft = {
+  day_index?: number | null;
+  date?: string | null;
+  label?: string | null;
+  summary?: string | null;
+  items?: TripImportedItemDraft[];
+};
+
+export type TripImportedItineraryDraft = {
+  pace?: ItineraryPace | null;
+  days?: TripImportedDayDraft[];
+};
+
+export type TripIntakeParseRequest = {
+  sourceText: string;
+  clarificationText?: string | null;
+  knownDraft?: TripIntakeDraft | null;
+  knownItinerary?: TripImportedItineraryDraft | null;
+};
+
+export type TripIntakeParseResult = {
+  draft: TripIntakeDraft;
+  derived?: TripIntakeDerived;
+  itinerary?: TripImportedItineraryDraft;
+  summary?: string | null;
+  warnings?: string[];
+};
+
+export type TripIntakeResponse = {
+  draft: {
+    title: string | null;
+    start_date: string | null;
+    end_date: string | null;
+    timezone: string | null;
+    traveler_count: number | null;
+  };
+  derived: {
+    duration_days: number | null;
+  };
+  itinerary: {
+    pace: ItineraryPace | null;
+    day_count: number;
+    item_count: number;
+    days: TripImportedDayDraft[];
+  };
+  summary: string;
+  warnings: string[];
+  blocking_missing_fields: TripIntakeField[];
+  optional_missing_fields: TripIntakeField[];
+  follow_up_prompt: string | null;
+  can_create: boolean;
 };
 
 export type PlannerRejectPreviewRequest = {
@@ -331,6 +418,16 @@ export interface PlannerCommandTranslator {
   }): Promise<PlannerCommand[]>;
 }
 
+export interface TripIntakeParser {
+  parse(input: {
+    sourceText: string;
+    clarificationText?: string | null;
+    knownDraft?: TripIntakeDraft | null;
+    knownItinerary?: TripImportedItineraryDraft | null;
+    now?: Date;
+  }): Promise<TripIntakeParseResult>;
+}
+
 export type PlannerDerivationContext = {
   routesAdapter: RoutesAdapter;
   preferredModes: TravelMode[];
@@ -342,6 +439,7 @@ export type PlannerDependencies = {
   routesAdapter: RoutesAdapter;
   clock?: () => Date;
   commandTranslator?: PlannerCommandTranslator;
+  tripIntakeParser?: TripIntakeParser;
 };
 
 export type CommandExecutionContext = PlannerDependencies & {

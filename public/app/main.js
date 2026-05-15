@@ -11,6 +11,7 @@ const state = {
   previewMeta: null,
   selectedDay: null,
   selectedItemId: null,
+  highlightedConflictId: null,
   scheduleTab: "timeline",
   workspaceTab: "selection",
   pending: false,
@@ -27,6 +28,7 @@ const state = {
   titleEditing: false,
   tripBrowserOpen: false,
   tripBrowserMode: "browse",
+  tripIntake: createEmptyTripIntakeState(),
 };
 const initialRouteState = readUrlState();
 const UI_LOCALE = globalThis.navigator?.language || "en-US";
@@ -59,11 +61,23 @@ const elements = {
   tripBrowserCloseButton: document.querySelector("#tripBrowserCloseButton"),
   tripList: document.querySelector("#tripList"),
   tripCreateForm: document.querySelector("#tripCreateForm"),
+  tripCreateSubmitButton: document.querySelector("#tripCreateSubmitButton"),
+  tripImportInput: document.querySelector("#tripImportInput"),
+  tripImportParseButton: document.querySelector("#tripImportParseButton"),
+  tripImportStatus: document.querySelector("#tripImportStatus"),
+  tripImportSummary: document.querySelector("#tripImportSummary"),
+  tripImportFollowUp: document.querySelector("#tripImportFollowUp"),
+  tripImportFollowUpPrompt: document.querySelector("#tripImportFollowUpPrompt"),
+  tripImportFollowUpInput: document.querySelector("#tripImportFollowUpInput"),
+  tripImportFollowUpButton: document.querySelector("#tripImportFollowUpButton"),
+  tripImportFollowUpHistory: document.querySelector("#tripImportFollowUpHistory"),
+  tripImportItinerary: document.querySelector("#tripImportItinerary"),
   tripCreateTitle: document.querySelector("#tripCreateTitle"),
   tripCreateStartDate: document.querySelector("#tripCreateStartDate"),
   tripCreateEndDate: document.querySelector("#tripCreateEndDate"),
   tripCreateTimezone: document.querySelector("#tripCreateTimezone"),
   tripCreateTravelers: document.querySelector("#tripCreateTravelers"),
+  tripCreateFields: document.querySelectorAll("[data-trip-field]"),
   dayTabs: document.querySelector("#dayTabs"),
   addDayButton: document.querySelector("#addDayButton"),
   removeDayButton: document.querySelector("#removeDayButton"),
@@ -127,7 +141,7 @@ elements.newTripToggleButton.addEventListener("click", () => {
   state.tripBrowserMode = "create";
   state.tripBrowserOpen = true;
   render();
-  elements.tripCreateTitle.focus();
+  elements.tripImportInput.focus();
 });
 
 elements.tripBrowserCloseButton.addEventListener("click", () => {
@@ -197,6 +211,13 @@ elements.tripCreateForm.addEventListener("submit", async (event) => {
         end_date: endDate,
         timezone,
         traveler_count: travelerCount,
+        import_draft:
+          state.tripIntake.parsed &&
+          !state.tripIntake.sourceDirty &&
+          elements.tripImportInput.value.trim() &&
+          (state.tripIntake.itinerary?.days?.length ?? 0) > 0
+            ? state.tripIntake.itinerary
+            : null,
       },
     });
 
@@ -213,6 +234,38 @@ elements.tripCreateForm.addEventListener("submit", async (event) => {
   } catch (error) {
     setPending(false, error.message, "error");
   }
+});
+
+elements.tripImportParseButton.addEventListener("click", async () => {
+  await parseTripIntake();
+});
+
+elements.tripImportFollowUpButton?.addEventListener("click", async () => {
+  await parseTripIntake({
+    clarificationText: elements.tripImportFollowUpInput?.value ?? "",
+  });
+});
+
+elements.tripCreateForm.addEventListener("input", (event) => {
+  if (event.target === elements.tripImportInput) {
+    markTripImportSourceDirty();
+  }
+
+  if (event.target === elements.tripCreateStartDate) {
+    maybeAutoFillTripEndDate();
+  }
+
+  if (event.target === elements.tripCreateEndDate) {
+    if (elements.tripCreateEndDate.value !== state.tripIntake.autoDerivedEndDate) {
+      state.tripIntake.autoDerivedEndDate = null;
+    }
+  }
+
+  renderTripCreateAssist();
+});
+
+elements.tripCreateTimezone.addEventListener("change", () => {
+  renderTripCreateAssist();
 });
 
 elements.tripList.addEventListener("click", async (event) => {
@@ -265,6 +318,7 @@ elements.applyButton.addEventListener("click", async () => {
     state.selectedDay = state.selectedDay ?? state.trip.days[0]?.date ?? null;
     clearPlaceSearchSession();
     clearHistory();
+    clearConflictHighlight();
     elements.assistantInput.value = "";
     render();
     setPending(false, "Preview applied.");
@@ -291,6 +345,7 @@ elements.rejectButton.addEventListener("click", async () => {
     state.previewMeta = null;
     clearPlaceSearchSession();
     clearHistory();
+    clearConflictHighlight();
     render();
     setPending(false, "Preview discarded.");
   } catch (error) {
@@ -444,6 +499,21 @@ elements.workspaceNotice.addEventListener("click", async (event) => {
 });
 
 elements.assistantDiff.addEventListener("click", async (event) => {
+  const previewFocusTarget = event.target.closest("[data-preview-focus-item-id]");
+  if (previewFocusTarget) {
+    focusPreviewChange(
+      previewFocusTarget.dataset.previewFocusItemId ?? null,
+      previewFocusTarget.dataset.previewFocusDayDate ?? null
+    );
+    return;
+  }
+
+  const conflictFocusTarget = event.target.closest("[data-conflict-action='focus']");
+  if (conflictFocusTarget) {
+    focusConflict(conflictFocusTarget.dataset.conflictId ?? null);
+    return;
+  }
+
   const repairTarget = event.target.closest("[data-conflict-action='repair']");
   if (!repairTarget) {
     return;
@@ -810,6 +880,69 @@ elements.focusEditor.addEventListener("submit", async (event) => {
   }
 });
 
+elements.tripImportItinerary?.addEventListener("input", (event) => {
+  const field = event.target.closest("[data-trip-intake-field]");
+  if (!field) {
+    return;
+  }
+
+  updateTripIntakeEditableField(field);
+});
+
+elements.tripImportItinerary?.addEventListener("click", (event) => {
+  const actionTarget = event.target.closest("[data-trip-intake-action]");
+  if (!actionTarget) {
+    return;
+  }
+
+  const dayIndex = Number.parseInt(actionTarget.dataset.dayIndex ?? "", 10);
+  const itemIndex = Number.parseInt(actionTarget.dataset.itemIndex ?? "", 10);
+  const action = actionTarget.dataset.tripIntakeAction;
+
+  mutateTripIntakeItinerary((itinerary) => {
+    if (action === "add-day") {
+      itinerary.days.push({
+        day_index: itinerary.days.length + 1,
+        date: null,
+        label: `Day ${itinerary.days.length + 1}`,
+        summary: "",
+        items: [],
+      });
+      return;
+    }
+
+    if (!Number.isFinite(dayIndex) || !itinerary.days[dayIndex]) {
+      return;
+    }
+
+    if (action === "remove-day") {
+      itinerary.days.splice(dayIndex, 1);
+      return;
+    }
+
+    if (action === "add-item") {
+      itinerary.days[dayIndex].items.push({
+        title: "New stop",
+        kind: "activity",
+        category: "",
+        start_time: "",
+        end_time: "",
+        duration_minutes: null,
+        status: "suggested",
+        locked: false,
+        subtitle: "",
+        notes: "",
+        tags: [],
+      });
+      return;
+    }
+
+    if (action === "remove-item" && Number.isFinite(itemIndex)) {
+      itinerary.days[dayIndex].items.splice(itemIndex, 1);
+    }
+  }, { rerender: true });
+});
+
 async function bootstrap() {
   seedTripCreateForm();
   await loadTrips();
@@ -842,6 +975,7 @@ async function loadTrip(nextTripId = state.tripId) {
     state.trip = null;
     state.preview = null;
     state.previewMeta = null;
+    clearConflictHighlight();
     state.debugEnabled = false;
     render();
     return;
@@ -856,6 +990,7 @@ async function loadTrip(nextTripId = state.tripId) {
   state.preview = null;
   state.previewMeta = null;
   clearHistory();
+  clearConflictHighlight();
   state.provider = payload.workspace.provider ?? "mock";
   state.assistantProvider = payload.workspace.assistant?.provider ?? "rules";
   state.storageMode = payload.workspace.storage?.mode ?? "memory";
@@ -898,6 +1033,7 @@ async function previewWithInput(input) {
     state.previewMeta = payload;
     state.workspaceTab = "assistant";
     clearPlaceSearchSession();
+    clearConflictHighlight();
     render();
     setPending(false, "Preview ready.");
   } catch (error) {
@@ -922,6 +1058,7 @@ async function executeImmediately(input, options = {}) {
     syncTripListEntry(payload.trip);
     state.preview = null;
     state.previewMeta = null;
+    clearConflictHighlight();
     if (options.clearSearch !== false) {
       clearPlaceSearchSession();
     }
@@ -964,6 +1101,8 @@ function render() {
   state.selectedDay = selectedDay?.date ?? null;
   state.selectedItemId = inferDefaultSelectedItemId(activeTrip, state.selectedDay, state.selectedItemId);
   const selectedItem = getSelectedItem(activeTrip, state.selectedDay, state.selectedItemId);
+  const highlightedConflict = resolveHighlightedConflict(activeTrip, state.highlightedConflictId);
+  const highlightedConflictItemIds = new Set(highlightedConflict?.item_ids ?? []);
 
   renderHeader(activeTrip, creating);
   renderMeta(activeTrip, creating);
@@ -973,10 +1112,10 @@ function render() {
   renderScheduleShell();
   renderWorkspaceShell();
   renderWorkspaceNotice();
-  renderMap(activeTrip, selectedDay, selectedItem);
-  renderPlan(activeTrip, selectedDay, selectedItem);
-  renderTimeline(activeTrip, selectedDay, selectedItem);
-  renderAssistant(activeTrip, selectedDay, selectedItem);
+  renderMap(activeTrip, selectedDay, selectedItem, highlightedConflictItemIds);
+  renderPlan(activeTrip, selectedDay, selectedItem, highlightedConflictItemIds);
+  renderTimeline(activeTrip, selectedDay, selectedItem, highlightedConflictItemIds);
+  renderAssistant(activeTrip, selectedDay, selectedItem, highlightedConflict);
   syncUrlState();
 }
 
@@ -985,7 +1124,7 @@ function renderHeader(trip, creating) {
     state.titleEditing = false;
     elements.tripTitleKicker.textContent = "Planning setup";
     elements.tripTitle.textContent = "Create a New Trip";
-    elements.tripSubtitle.textContent = "Set dates, timezone, and travelers before opening a new workspace.";
+    elements.tripSubtitle.textContent = "Paste a trip brief or fill the fields directly before opening a new workspace.";
     document.title = "Create a New Trip";
     return;
   }
@@ -1052,6 +1191,8 @@ function renderTripBrowser() {
       `)
       .join("")
     : '<div class="trip-list-empty">No trips yet. Create one to get started.</div>';
+  elements.tripImportParseButton.disabled = state.pending;
+  renderTripCreateAssist();
 }
 
 function renderDayTabs(trip) {
@@ -1151,17 +1292,18 @@ function renderWorkspaceNotice() {
   `;
 }
 
-function renderMap(trip, day, selectedItem) {
+function renderMap(trip, day, selectedItem, highlightedConflictItemIds) {
   mapController.renderMap({
     provider: state.provider,
     mapsBrowserApiKey: state.mapsBrowserApiKey,
     trip,
     day,
     selectedItem,
+    highlightedConflictItemIds,
   });
 }
 
-function renderPlan(trip, day, selectedItem) {
+function renderPlan(trip, day, selectedItem, highlightedConflictItemIds) {
   const timeZone = resolveTripTimeZone(trip);
   const flow = buildPlanFlow(trip, day);
   if (flow.length === 0) {
@@ -1178,8 +1320,9 @@ function renderPlan(trip, day, selectedItem) {
             : "";
           const meta = block.meta ? `<div class="plan-meta">${escapeHtml(block.meta)}</div>` : "";
           const locked = block.locked ? '<span class="lock-badge">Locked</span>' : "";
+          const conflictHighlight = highlightedConflictItemIds?.has(block.itemId) ? " conflict-highlight" : "";
           return `
-            <article class="plan-row ${flowBlockClass(block)}${block.itemId === selectedItem?.id ? " selected" : ""}" data-item-id="${block.itemId}">
+            <article class="plan-row ${flowBlockClass(block)}${block.itemId === selectedItem?.id ? " selected" : ""}${conflictHighlight}" data-item-id="${block.itemId}">
               <div class="plan-time">${localTime(block.start_at, timeZone)}-${localTime(block.end_at, timeZone)}</div>
               <div class="plan-copy">
                 <strong>${escapeHtml(block.title)}</strong>
@@ -1201,7 +1344,7 @@ function renderPlan(trip, day, selectedItem) {
   });
 }
 
-function renderTimeline(trip, day, selectedItem) {
+function renderTimeline(trip, day, selectedItem, highlightedConflictItemIds) {
   if (!day) {
     elements.timelinePanel.innerHTML = '<div class="timeline-empty">No timeline for this day.</div>';
     return;
@@ -1222,13 +1365,16 @@ function renderTimeline(trip, day, selectedItem) {
       const warning = block.warningCount
         ? `<span class="event-alert" title="${block.warningCount} conflict(s)">${block.warningCount}</span>`
         : "";
+      const conflictHighlight = highlightedConflictItemIds?.has(block.itemId) ? " conflict-highlight" : "";
       return `
         <div
-          class="event-pill ${flowBlockClass(block)} density-${density}${block.itemId === selectedItem?.id ? " selected" : ""}${block.locked ? " locked" : ""}"
+          class="event-pill ${flowBlockClass(block)} density-${density}${block.itemId === selectedItem?.id ? " selected" : ""}${block.locked ? " locked" : ""}${conflictHighlight}"
           data-item-id="${block.itemId}"
+          title="${escapeHtml(block.meta || timelineBlockTitle(block, density))}"
           style="left:${left}%;width:${width}%;top:${top}px;">
           ${warning}
           <strong>${escapeHtml(timelineBlockTitle(block, density))}</strong>
+          ${block.meta ? `<small>${escapeHtml(block.meta)}</small>` : ""}
         </div>
       `;
     })
@@ -1236,14 +1382,25 @@ function renderTimeline(trip, day, selectedItem) {
   const transportStrips = model.transports
     .map((block) => {
       const left = clampPercent(percentFromTimelineMinute(minutesRelativeToDay(block.start_at, day.date, timeZone), window));
-      const width = Math.max(1.8, (exactDurationMinutes(block.start_at, block.end_at) / window.totalMinutes) * 100);
+      const transportMinutes = exactDurationMinutes(block.start_at, block.end_at);
+      const width = Math.max(14, (transportMinutes / window.totalMinutes) * 100);
       const fittedLeft = Math.max(0, Math.min(100 - width, left));
       const warning = block.warningCount
         ? `<span class="transport-alert" title="${block.warningCount} warning(s)"></span>`
         : "";
-      const label = width >= 5.4 ? `<span>${escapeHtml(timelineBlockTitle(block))}</span>` : "";
+      const labelText = timelineBlockTitle(block);
+      const fallbackLabel = `${transportMinutes}m`;
+      const label = width >= 5.4
+        ? `<span>${escapeHtml(labelText)}</span>`
+        : (width >= 2.8 ? `<span>${escapeHtml(fallbackLabel)}</span>` : "");
+      const conflictHighlight =
+        block.fromItemId && block.toItemId &&
+        highlightedConflictItemIds?.has(block.fromItemId) &&
+        highlightedConflictItemIds?.has(block.toItemId)
+          ? " conflict-highlight"
+          : "";
       return `
-        <div class="transport-strip ${block.transportClassName ?? ""}" style="left:${fittedLeft}%;width:${width}%;top:${layout.transportTop}px;">
+        <div class="transport-strip ${block.transportClassName ?? ""}${conflictHighlight}" title="${escapeHtml(block.meta ?? labelText)}" style="left:${fittedLeft}%;width:${width}%;top:${layout.transportTop}px;">
           ${label}
           ${warning}
         </div>
@@ -1252,6 +1409,7 @@ function renderTimeline(trip, day, selectedItem) {
     .join("");
 
   elements.timelinePanel.innerHTML = `
+    ${renderTimelineConflictPrompt(trip, day)}
     <div class="timeline-board" style="--timeline-rows:${layout.rows}; --timeline-height:${layout.totalHeight}px; --timeline-columns:${window.columnCount};">
       <div class="hour-ruler">${hourMarks}</div>
       <div class="lane-grid">
@@ -1270,38 +1428,110 @@ function renderTimeline(trip, day, selectedItem) {
     selectItem,
     executeImmediately,
   });
+
+  elements.timelinePanel.querySelectorAll("[data-timeline-conflict-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      focusConflict(button.dataset.timelineConflictId ?? null);
+    });
+  });
 }
 
-function renderAssistant(trip, day, selectedItem) {
+function renderTimelineConflictPrompt(trip, day) {
+  const conflicts = getDayTimingConflicts(trip, day);
+  if (conflicts.length === 0) {
+    return "";
+  }
+
+  const shownConflicts = conflicts.slice(0, 3);
+  const overflowCount = conflicts.length - shownConflicts.length;
+  const hasError = conflicts.some((conflict) => conflict.severity === "error");
+  const summary = `${formatCountLabel(conflicts.length, "timing issue")} needs attention on this day. Original times are kept for review.`;
+  const overflow = overflowCount > 0 ? `<li class="schedule-conflict-extra">${escapeHtml(formatCountLabel(overflowCount, "more issue"))}</li>` : "";
+
+  return `
+    <section class="schedule-conflict-prompt${hasError ? " has-error" : ""}" aria-live="polite">
+      <div class="schedule-conflict-copy">
+        <strong>Timing needs attention</strong>
+        <span>${escapeHtml(summary)}</span>
+      </div>
+      <ul class="schedule-conflict-list">
+        ${shownConflicts
+          .map((conflict) => `
+            <li>
+              <span>${escapeHtml(conflict.message)}</span>
+              <button type="button" class="button button-small" data-timeline-conflict-id="${escapeHtml(conflict.id)}">Locate</button>
+            </li>
+          `)
+          .join("")}
+        ${overflow}
+      </ul>
+    </section>
+  `;
+}
+
+function getDayTimingConflicts(trip, day) {
+  if (!trip || !day) {
+    return [];
+  }
+
+  const itemIds = new Set((day.items ?? []).map((item) => item.id));
+  return (trip.conflicts ?? []).filter((conflict) => {
+    if (!["travel_time_underestimated", "overlap_conflict"].includes(conflict.type)) {
+      return false;
+    }
+
+    const conflictItemIds = conflict.item_ids ?? [];
+    if (conflictItemIds.length === 0) {
+      return Boolean(conflict.id?.includes(day.date));
+    }
+
+    return conflictItemIds.some((itemId) => itemIds.has(itemId));
+  });
+}
+
+function renderAssistant(trip, day, selectedItem, highlightedConflict) {
   elements.focusEditor.innerHTML = renderFocusedEditor(trip, day, selectedItem);
   elements.resetButton.classList.toggle("hidden", !state.debugEnabled);
   if (!state.previewMeta) {
     elements.assistantDiff.innerHTML = `
       <div class="diff-summary">No preview yet.</div>
       <div class="diff-meta">Try the assistant box, drag a timeline card, or edit the focused item for ${escapeHtml(day.label)}.</div>
-      ${renderConflicts(trip, day)}
+      ${renderConflicts(trip, day, {
+        highlightedConflictId: highlightedConflict?.id ?? null,
+        title: "Current conflicts",
+      })}
     `;
     elements.applyButton.classList.add("hidden");
     elements.rejectButton.classList.add("hidden");
     return;
   }
 
+  const previewTrip = state.preview ?? trip;
+  const itemChanges = collectPreviewItemChanges(state.trip, previewTrip);
+  const routeChanges = collectPreviewRouteChanges(state.trip, previewTrip, state.previewMeta.diff.patch.changed_route_ids ?? []);
+  const resolvedConflicts = collectConflictSnapshots(state.trip, state.previewMeta.resolved_conflicts);
+  const introducedConflicts = collectConflictSnapshots(previewTrip, state.previewMeta.introduced_conflicts);
   const commands = state.previewMeta.commands
-    .map((command) => `<li><code>${escapeHtml(command.action)}</code> — ${escapeHtml(command.reason)}</li>`)
-    .join("");
-  const warnings = state.previewMeta.warnings
-    .map((warning) => `<li class="conflict-error">${escapeHtml(warning)}</li>`)
+    .map((command) => `<li><code>${escapeHtml(command.action)}</code> - ${escapeHtml(command.reason)}</li>`)
     .join("");
 
   elements.assistantDiff.innerHTML = `
     <div class="diff-summary">${escapeHtml(state.previewMeta.diff.summary)}</div>
     <div class="diff-meta">
-      Changed items: ${state.previewMeta.changed_item_ids.length} ·
+      Changed items: ${itemChanges.length} ·
+      Changed routes: ${routeChanges.length} ·
       Resolved conflicts: ${state.previewMeta.resolved_conflicts.length} ·
       Introduced conflicts: ${state.previewMeta.introduced_conflicts.length}
     </div>
-    <ul class="diff-list">${commands}</ul>
-    ${warnings ? `<ul class="diff-list">${warnings}</ul>` : ""}
+    ${renderPreviewChangeList(itemChanges, routeChanges)}
+    ${resolvedConflicts.length ? renderConflictSnapshotList("Resolved in this preview", resolvedConflicts, { allowFocus: false, allowRepair: false }) : ""}
+    ${introducedConflicts.length ? renderConflictSnapshotList("Conflicts after this preview", introducedConflicts, { highlightedConflictId: highlightedConflict?.id ?? null }) : ""}
+    ${commands ? `<div class="diff-section"><div class="diff-section-title">Planned actions</div><ul class="diff-list">${commands}</ul></div>` : ""}
+    ${renderConflicts(previewTrip, day, {
+      highlightedConflictId: highlightedConflict?.id ?? null,
+      title: "Preview day conflicts",
+      emptyText: "No conflicts remain on this day after the preview.",
+    })}
   `;
 
   elements.applyButton.classList.remove("hidden");
@@ -1591,7 +1821,52 @@ function selectItem(itemId) {
   }
 
   state.selectedItemId = itemId;
+  clearConflictHighlight();
   state.workspaceTab = "selection";
+  render();
+}
+
+function clearConflictHighlight() {
+  state.highlightedConflictId = null;
+}
+
+function focusConflict(conflictId) {
+  if (!conflictId) {
+    return;
+  }
+
+  const activeTrip = getActiveTrip();
+  const conflict = activeTrip?.conflicts?.find((candidate) => candidate.id === conflictId);
+  if (!activeTrip || !conflict) {
+    return;
+  }
+
+  state.highlightedConflictId = conflict.id;
+  const conflictDay = findConflictDayDate(activeTrip, conflict);
+  if (conflictDay) {
+    state.selectedDay = conflictDay;
+  }
+
+  const focusItemId = conflict.item_ids[0]
+    ?? inferDefaultSelectedItemId(activeTrip, state.selectedDay ?? conflictDay, state.selectedItemId);
+  if (focusItemId) {
+    state.selectedItemId = focusItemId;
+  }
+
+  state.scheduleTab = "timeline";
+  render();
+}
+
+function focusPreviewChange(itemId, dayDate) {
+  if (dayDate) {
+    state.selectedDay = dayDate;
+  }
+
+  if (itemId) {
+    state.selectedItemId = itemId;
+  }
+
+  clearConflictHighlight();
   render();
 }
 
@@ -1722,18 +1997,877 @@ function seedTripCreateForm() {
   const today = new Date();
   const startDate = today.toISOString().slice(0, 10);
   const endDate = addDaysToDate(startDate, 2);
+  state.tripIntake = createEmptyTripIntakeState();
+  elements.tripImportInput.value = "";
   elements.tripCreateTitle.value = "";
   elements.tripCreateStartDate.value = startDate;
   elements.tripCreateEndDate.value = endDate;
   ensureTimeZoneOption(BROWSER_TIME_ZONE);
   elements.tripCreateTimezone.value = BROWSER_TIME_ZONE;
   elements.tripCreateTravelers.value = "2";
+  renderTripCreateAssist();
+}
+
+function createEmptyTripIntakeState() {
+  return {
+    parsed: false,
+    draft: null,
+    summary: null,
+    warnings: [],
+    followUpPrompt: null,
+    durationDays: null,
+    itinerary: null,
+    clarificationHistory: [],
+    lastParsedSourceText: "",
+    sourceDirty: false,
+    statusMessage: "",
+    statusTone: "neutral",
+    autoDerivedEndDate: null,
+    hasExactEndDate: false,
+  };
+}
+
+function markTripImportSourceDirty() {
+  if (!state.tripIntake.parsed) {
+    return;
+  }
+
+  const sourceText = elements.tripImportInput.value.trim();
+  const sourceDirty = sourceText !== state.tripIntake.lastParsedSourceText;
+  if (!sourceDirty && !state.tripIntake.sourceDirty) {
+    return;
+  }
+
+  state.tripIntake = {
+    ...state.tripIntake,
+    sourceDirty,
+    statusMessage: sourceDirty
+      ? "The pasted plan changed. Extract again to refresh the imported itinerary."
+      : "",
+    statusTone: "neutral",
+  };
+  renderTripCreateAssist();
+}
+
+async function parseTripIntake(options = {}) {
+  const sourceText = elements.tripImportInput.value.trim();
+  const clarificationText = String(options.clarificationText ?? "").trim();
+  if (!sourceText) {
+    state.tripIntake = {
+      ...createEmptyTripIntakeState(),
+      statusMessage: "Paste a plan before extracting trip details.",
+      statusTone: "error",
+    };
+    renderTripCreateAssist();
+    return;
+  }
+
+  if (options.clarificationText !== undefined && !clarificationText) {
+    state.tripIntake = {
+      ...state.tripIntake,
+      statusMessage: "Answer the follow-up before updating the extraction.",
+      statusTone: "error",
+    };
+    renderTripCreateAssist();
+    return;
+  }
+
+  setPending(true, "Extracting trip details…");
+  try {
+    const payload = await requestJson("/api/trips/intake/parse", {
+      method: "POST",
+      body: {
+        source_text: sourceText,
+        clarification_text: clarificationText || null,
+        known_draft: state.tripIntake.parsed ? state.tripIntake.draft : null,
+        known_itinerary: state.tripIntake.parsed ? state.tripIntake.itinerary : null,
+      },
+    });
+
+    const clarificationHistory = clarificationText
+      ? [...(state.tripIntake.clarificationHistory ?? []), clarificationText]
+      : [];
+    state.tripIntake = {
+      parsed: true,
+      draft: payload.draft ?? {},
+      summary: payload.summary ?? null,
+      warnings: payload.warnings ?? [],
+      followUpPrompt: payload.follow_up_prompt ?? null,
+      durationDays: payload.derived?.duration_days ?? null,
+      itinerary: normalizeEditableTripIntakeItinerary(payload.itinerary ?? null),
+      clarificationHistory,
+      lastParsedSourceText: sourceText,
+      sourceDirty: false,
+      statusMessage: "",
+      statusTone: "neutral",
+      autoDerivedEndDate: null,
+      hasExactEndDate: Boolean(payload.draft?.end_date),
+    };
+
+    elements.tripCreateTitle.value = payload.draft?.title ?? "";
+    elements.tripCreateStartDate.value = payload.draft?.start_date ?? "";
+    elements.tripCreateEndDate.value = payload.draft?.end_date ?? "";
+    if (payload.draft?.timezone) {
+      ensureTimeZoneOption(payload.draft.timezone);
+      elements.tripCreateTimezone.value = payload.draft.timezone;
+    } else {
+      elements.tripCreateTimezone.value = "";
+    }
+    if (payload.draft?.traveler_count) {
+      elements.tripCreateTravelers.value = String(payload.draft.traveler_count);
+    }
+
+    maybeAutoFillTripEndDate();
+    const resolution = resolveTripCreateState();
+    state.tripIntake.statusMessage = resolution.canCreate && !state.tripIntake.sourceDirty
+      ? "Trip details extracted. Ready to create."
+      : "Trip details extracted. Fill the highlighted fields to finish.";
+    state.tripIntake.statusTone = resolution.canCreate ? "success" : "neutral";
+    if (elements.tripImportFollowUpInput) {
+      elements.tripImportFollowUpInput.value = "";
+    }
+    renderTripCreateAssist();
+    setPending(false, state.tripIntake.statusMessage, state.tripIntake.statusTone);
+  } catch (error) {
+    state.tripIntake = {
+      ...state.tripIntake,
+      statusMessage: error.message,
+      statusTone: "error",
+    };
+    renderTripCreateAssist();
+    setPending(false, error.message, "error");
+  }
+}
+
+function normalizeEditableTripIntakeItinerary(itinerary) {
+  if (!itinerary || !Array.isArray(itinerary.days)) {
+    return null;
+  }
+
+  return recountTripIntakeItinerary({
+    pace: itinerary.pace ?? null,
+    days: itinerary.days.map((day, dayIndex) => ({
+      day_index: day.day_index ?? dayIndex + 1,
+      date: day.date ?? null,
+      label: day.label ?? `Day ${dayIndex + 1}`,
+      summary: day.summary ?? "",
+      items: Array.isArray(day.items)
+        ? day.items.map((item) => ({
+            title: item.title ?? "",
+            kind: item.kind ?? "activity",
+            category: item.category ?? "",
+            start_time: item.start_time ?? "",
+            end_time: item.end_time ?? "",
+            duration_minutes: item.duration_minutes ?? null,
+            status: item.status ?? "suggested",
+            locked: Boolean(item.locked),
+            subtitle: item.subtitle ?? "",
+            notes: item.notes ?? "",
+            tags: Array.isArray(item.tags) ? item.tags.slice() : [],
+          }))
+        : [],
+    })),
+  });
+}
+
+function recountTripIntakeItinerary(itinerary) {
+  if (!itinerary) {
+    return null;
+  }
+
+  const days = Array.isArray(itinerary.days)
+    ? itinerary.days.map((day, index) => ({
+        ...day,
+        day_index: day.day_index ?? index + 1,
+        items: Array.isArray(day.items) ? day.items : [],
+      }))
+    : [];
+
+  return {
+    pace: itinerary.pace ?? null,
+    day_count: days.length,
+    item_count: days.reduce((total, day) => total + day.items.length, 0),
+    days,
+  };
+}
+
+function maybeAutoFillTripEndDate() {
+  if (!state.tripIntake.parsed || state.tripIntake.hasExactEndDate || !state.tripIntake.durationDays) {
+    return;
+  }
+
+  const startDate = elements.tripCreateStartDate.value.trim();
+  if (!startDate) {
+    return;
+  }
+
+  const nextEndDate = addDaysToDate(startDate, state.tripIntake.durationDays - 1);
+  const currentEndDate = elements.tripCreateEndDate.value.trim();
+  if (!currentEndDate || currentEndDate === state.tripIntake.autoDerivedEndDate) {
+    elements.tripCreateEndDate.value = nextEndDate;
+    state.tripIntake.autoDerivedEndDate = nextEndDate;
+  }
+}
+
+function renderTripCreateAssist() {
+  if (!elements.tripImportStatus || !elements.tripImportSummary) {
+    return;
+  }
+
+  if (elements.tripCreateSubmitButton) {
+    elements.tripCreateSubmitButton.disabled = state.pending || state.tripIntake.sourceDirty;
+  }
+
+  const resolution = resolveTripCreateState();
+  const parsed = state.tripIntake.parsed;
+  const statusMessage = state.tripIntake.statusMessage
+    || (parsed
+      ? (resolution.canCreate
+        ? "Trip details extracted. Ready to create."
+        : "Trip details extracted. Fill the highlighted fields to finish.")
+      : "");
+  const statusTone = state.tripIntake.statusMessage
+    ? state.tripIntake.statusTone
+    : (resolution.canCreate ? "success" : "neutral");
+
+  elements.tripImportStatus.textContent = statusMessage;
+  elements.tripImportStatus.dataset.tone = statusTone;
+  elements.tripImportStatus.classList.toggle("hidden", !statusMessage);
+
+  if (!parsed) {
+    elements.tripImportSummary.innerHTML = "";
+    elements.tripImportSummary.classList.add("hidden");
+    renderTripImportFollowUp(false);
+    renderTripImportItineraryEditor();
+    clearTripCreateFieldHints();
+    return;
+  }
+
+  const summaryParts = [];
+  if (state.tripIntake.summary) {
+    summaryParts.push(`<div><strong>${escapeHtml(state.tripIntake.summary)}</strong></div>`);
+  }
+
+  if (resolution.blockingMissingFields.length) {
+    summaryParts.push(
+      `<div>Still needed: ${escapeHtml(resolution.blockingMissingFields.map(formatTripFieldLabel).join(", "))}.</div>`
+    );
+  } else {
+    summaryParts.push("<div>All required trip creation fields are ready.</div>");
+  }
+
+  if (state.tripIntake.sourceDirty) {
+    summaryParts.push("<div>The pasted plan changed after extraction. Run extraction again before importing the itinerary.</div>");
+  }
+
+  if ((state.tripIntake.itinerary?.day_count ?? 0) > 0) {
+    summaryParts.push(
+      `<div>The imported itinerary will create ${escapeHtml(String(state.tripIntake.itinerary.day_count))} day(s) and ${escapeHtml(String(state.tripIntake.itinerary.item_count ?? 0))} item(s).</div>`
+    );
+  }
+
+  if (resolution.endDateWillAutoFillMessage) {
+    summaryParts.push(`<div>${escapeHtml(resolution.endDateWillAutoFillMessage)}</div>`);
+  }
+
+  if (state.tripIntake.followUpPrompt) {
+    summaryParts.push(`<div>${escapeHtml(state.tripIntake.followUpPrompt)}</div>`);
+  }
+
+  if (!state.tripIntake.draft?.traveler_count) {
+    summaryParts.push(
+      `<div>Traveler count was not specified. The form is currently set to ${escapeHtml(elements.tripCreateTravelers.value || "2")}.</div>`
+    );
+  }
+
+  if (state.tripIntake.warnings.length) {
+    summaryParts.push(`<div>${escapeHtml(state.tripIntake.warnings.join(" "))}</div>`);
+  }
+
+  elements.tripImportSummary.innerHTML = summaryParts.join("");
+  elements.tripImportSummary.classList.toggle("hidden", summaryParts.length === 0);
+  renderTripImportFollowUp(Boolean(resolution.blockingMissingFields.length || (!resolution.canCreate && state.tripIntake.followUpPrompt)));
+  renderTripImportItineraryEditor();
+  updateTripCreateFieldHints(resolution);
+}
+
+function renderTripImportFollowUp(visible) {
+  if (!elements.tripImportFollowUp || !elements.tripImportFollowUpPrompt) {
+    return;
+  }
+
+  const shouldShow = visible && state.tripIntake.parsed;
+  elements.tripImportFollowUp.classList.toggle("hidden", !shouldShow);
+  if (!shouldShow) {
+    elements.tripImportFollowUpPrompt.textContent = "";
+    elements.tripImportFollowUpHistory?.classList.add("hidden");
+    if (elements.tripImportFollowUpHistory) {
+      elements.tripImportFollowUpHistory.innerHTML = "";
+    }
+    return;
+  }
+
+  elements.tripImportFollowUpPrompt.textContent = state.tripIntake.followUpPrompt
+    || "Answer the missing details here and update the extraction.";
+  elements.tripImportFollowUpButton.disabled = state.pending;
+
+  const history = state.tripIntake.clarificationHistory ?? [];
+  if (!elements.tripImportFollowUpHistory) {
+    return;
+  }
+
+  if (!history.length) {
+    elements.tripImportFollowUpHistory.innerHTML = "";
+    elements.tripImportFollowUpHistory.classList.add("hidden");
+    return;
+  }
+
+  elements.tripImportFollowUpHistory.innerHTML = `
+    <div class="trip-import-followup-history-title">Clarifications used so far</div>
+    <ul class="trip-import-followup-history-list">
+      ${history.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("")}
+    </ul>
+  `;
+  elements.tripImportFollowUpHistory.classList.remove("hidden");
+}
+
+function renderTripImportItineraryEditor() {
+  if (!elements.tripImportItinerary) {
+    return;
+  }
+
+  const itinerary = state.tripIntake.itinerary;
+  if (!state.tripIntake.parsed || !itinerary?.days?.length) {
+    elements.tripImportItinerary.innerHTML = "";
+    elements.tripImportItinerary.classList.add("hidden");
+    return;
+  }
+
+  elements.tripImportItinerary.innerHTML = `
+    <div class="trip-import-itinerary-header">
+      <div>
+        <strong>Imported itinerary preview</strong>
+        <div class="trip-import-itinerary-meta">${escapeHtml(
+          state.tripIntake.sourceDirty
+            ? "This preview is stale until you run extraction again."
+            : "Edit the day labels, summaries, and items before creating the trip."
+        )}</div>
+      </div>
+      <button type="button" class="button button-small" data-trip-intake-action="add-day">Add day</button>
+    </div>
+    <div class="trip-import-days">
+      ${itinerary.days
+        .map((day, dayIndex) => renderTripImportDayEditor(day, dayIndex))
+        .join("")}
+    </div>
+  `;
+  elements.tripImportItinerary.classList.remove("hidden");
+}
+
+function renderTripImportDayEditor(day, dayIndex) {
+  return `
+    <section class="trip-import-day-card" data-trip-intake-day-index="${dayIndex}">
+      <div class="trip-import-day-header">
+        <div>
+          <div class="trip-import-day-kicker">Day ${dayIndex + 1}</div>
+          <div class="trip-import-day-date">${escapeHtml(day.date || "Trip date will align from the final start date.")}</div>
+        </div>
+        <button type="button" class="button button-small" data-trip-intake-action="remove-day" data-day-index="${dayIndex}">Remove day</button>
+      </div>
+      <div class="trip-import-day-grid">
+        <label class="trip-create-field">
+          <span>Day label</span>
+          <input type="text" data-trip-intake-field="day-label" data-day-index="${dayIndex}" value="${escapeHtml(day.label ?? "")}" autocomplete="off">
+        </label>
+        <label class="trip-create-field">
+          <span>Summary</span>
+          <input type="text" data-trip-intake-field="day-summary" data-day-index="${dayIndex}" value="${escapeHtml(day.summary ?? "")}" autocomplete="off">
+        </label>
+      </div>
+      <div class="trip-import-items">
+        ${day.items
+          .map((item, itemIndex) => renderTripImportItemEditor(item, dayIndex, itemIndex))
+          .join("")}
+      </div>
+      <div class="trip-import-day-actions">
+        <button type="button" class="button button-small" data-trip-intake-action="add-item" data-day-index="${dayIndex}">Add item</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderTripImportItemEditor(item, dayIndex, itemIndex) {
+  return `
+    <article class="trip-import-item-card" data-trip-intake-item-index="${itemIndex}">
+      <div class="trip-import-item-grid">
+        <label class="trip-create-field">
+          <span>Title</span>
+          <input type="text" data-trip-intake-field="item-title" data-day-index="${dayIndex}" data-item-index="${itemIndex}" value="${escapeHtml(item.title ?? "")}" autocomplete="off">
+        </label>
+        <label class="trip-create-field">
+          <span>Kind</span>
+          <select data-trip-intake-field="item-kind" data-day-index="${dayIndex}" data-item-index="${itemIndex}">
+            ${renderTripImportItemKindOptions(item.kind)}
+          </select>
+        </label>
+        <label class="trip-create-field">
+          <span>Start</span>
+          <input type="time" data-trip-intake-field="item-start-time" data-day-index="${dayIndex}" data-item-index="${itemIndex}" value="${escapeHtml(item.start_time ?? "")}">
+        </label>
+        <label class="trip-create-field">
+          <span>End</span>
+          <input type="time" data-trip-intake-field="item-end-time" data-day-index="${dayIndex}" data-item-index="${itemIndex}" value="${escapeHtml(item.end_time ?? "")}">
+        </label>
+      </div>
+      <div class="trip-import-item-meta-row">
+        <div class="trip-import-item-meta">${escapeHtml(formatTripImportItemMeta(item))}</div>
+        <button type="button" class="button button-small" data-trip-intake-action="remove-item" data-day-index="${dayIndex}" data-item-index="${itemIndex}">Remove</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderTripImportItemKindOptions(selectedKind) {
+  const kinds = [
+    "flight",
+    "transit",
+    "check_in",
+    "check_out",
+    "lodging",
+    "activity",
+    "meal",
+    "buffer",
+    "free_time",
+  ];
+
+  return kinds
+    .map((kind) => `<option value="${kind}"${kind === selectedKind ? " selected" : ""}>${escapeHtml(kind.replace(/_/g, " "))}</option>`)
+    .join("");
+}
+
+function formatTripImportItemMeta(item) {
+  const fragments = [];
+  if (item.status) {
+    fragments.push(item.status);
+  }
+  if (item.locked) {
+    fragments.push("locked");
+  }
+  if (item.category) {
+    fragments.push(item.category);
+  }
+  return fragments.length ? fragments.join(" · ") : "Suggested stop";
+}
+
+function updateTripIntakeEditableField(field) {
+  const dayIndex = Number.parseInt(field.dataset.dayIndex ?? "", 10);
+  const itemIndex = Number.parseInt(field.dataset.itemIndex ?? "", 10);
+  const fieldName = field.dataset.tripIntakeField;
+
+  mutateTripIntakeItinerary((itinerary) => {
+    if (!Number.isFinite(dayIndex) || !itinerary.days[dayIndex]) {
+      return;
+    }
+
+    const day = itinerary.days[dayIndex];
+    if (fieldName === "day-label") {
+      day.label = field.value;
+      return;
+    }
+
+    if (fieldName === "day-summary") {
+      day.summary = field.value;
+      return;
+    }
+
+    if (!Number.isFinite(itemIndex) || !day.items[itemIndex]) {
+      return;
+    }
+
+    const item = day.items[itemIndex];
+    if (fieldName === "item-title") {
+      item.title = field.value;
+      return;
+    }
+
+    if (fieldName === "item-kind") {
+      item.kind = field.value;
+      return;
+    }
+
+    if (fieldName === "item-start-time") {
+      item.start_time = field.value;
+      return;
+    }
+
+    if (fieldName === "item-end-time") {
+      item.end_time = field.value;
+    }
+  });
+}
+
+function mutateTripIntakeItinerary(mutator, options = {}) {
+  if (!state.tripIntake.itinerary?.days?.length) {
+    return;
+  }
+
+  const nextItinerary = structuredClone(state.tripIntake.itinerary);
+  mutator(nextItinerary);
+  nextItinerary.days = nextItinerary.days.map((day, index) => ({
+    ...day,
+    day_index: index + 1,
+    label: day.label || `Day ${index + 1}`,
+    items: Array.isArray(day.items) ? day.items : [],
+  }));
+  state.tripIntake = {
+    ...state.tripIntake,
+    itinerary: recountTripIntakeItinerary(nextItinerary),
+  };
+
+  if (options.rerender) {
+    renderTripCreateAssist();
+  }
+}
+
+function resolveTripCreateState() {
+  const title = elements.tripCreateTitle.value.trim();
+  const startDate = elements.tripCreateStartDate.value.trim();
+  const timezone = elements.tripCreateTimezone.value.trim();
+  const travelerCount = Number.parseInt(elements.tripCreateTravelers.value.trim(), 10);
+  let endDate = elements.tripCreateEndDate.value.trim();
+  let endDateIsDerived = false;
+  let endDateWillAutoFillMessage = "";
+
+  if (!endDate && startDate && state.tripIntake.durationDays && !state.tripIntake.hasExactEndDate) {
+    endDate = addDaysToDate(startDate, state.tripIntake.durationDays - 1);
+    endDateIsDerived = true;
+  }
+
+  if (!endDate && state.tripIntake.durationDays && !state.tripIntake.hasExactEndDate) {
+    endDateWillAutoFillMessage = `End date will auto-fill from the ${state.tripIntake.durationDays}-day duration once you set the start date.`;
+  } else if (endDateIsDerived) {
+    endDateWillAutoFillMessage = `End date is auto-filled from the ${state.tripIntake.durationDays}-day duration.`;
+  }
+
+  const blockingMissingFields = [];
+  if (!title) blockingMissingFields.push("title");
+  if (!startDate) blockingMissingFields.push("start_date");
+  if (!endDate) blockingMissingFields.push("end_date");
+  if (!timezone) blockingMissingFields.push("timezone");
+
+  const optionalMissingFields = Number.isFinite(travelerCount) && travelerCount > 0 ? [] : ["traveler_count"];
+  const importDraftReady =
+    state.tripIntake.parsed &&
+    !state.tripIntake.sourceDirty &&
+    (state.tripIntake.itinerary?.days?.length ?? 0) > 0;
+
+  return {
+    blockingMissingFields,
+    optionalMissingFields,
+    canCreate: blockingMissingFields.length === 0,
+    importDraftReady,
+    endDateWillAutoFillMessage,
+  };
+}
+
+function updateTripCreateFieldHints(resolution) {
+  elements.tripCreateFields.forEach((field) => {
+    const fieldName = field.dataset.tripField;
+    const isMissing = resolution.blockingMissingFields.includes(fieldName);
+    let hint = "";
+
+    if (fieldName === "title" && isMissing) {
+      hint = "Add a short trip title.";
+    }
+
+    if (fieldName === "start_date" && isMissing) {
+      hint = "Add the exact trip start date.";
+    }
+
+    if (fieldName === "end_date") {
+      if (isMissing && state.tripIntake.durationDays) {
+        hint = `This will auto-fill from the ${state.tripIntake.durationDays}-day duration after you set the start date.`;
+      } else if (isMissing) {
+        hint = "Add the exact trip end date.";
+      } else if (resolution.endDateWillAutoFillMessage) {
+        hint = resolution.endDateWillAutoFillMessage;
+      }
+    }
+
+    if (fieldName === "timezone" && isMissing) {
+      hint = "Choose the trip timezone.";
+    }
+
+    if (fieldName === "traveler_count" && state.tripIntake.parsed && !state.tripIntake.draft?.traveler_count) {
+      hint = `Not found in the pasted plan. Update it if ${elements.tripCreateTravelers.value} is wrong.`;
+    }
+
+    field.classList.toggle("is-missing", Boolean(isMissing));
+    const hintNode = field.querySelector(".trip-field-hint");
+    if (hintNode) {
+      hintNode.textContent = hint;
+      hintNode.classList.toggle("hidden", !hint);
+    }
+  });
+}
+
+function clearTripCreateFieldHints() {
+  elements.tripCreateFields.forEach((field) => {
+    field.classList.remove("is-missing");
+    const hintNode = field.querySelector(".trip-field-hint");
+    if (hintNode) {
+      hintNode.textContent = "";
+      hintNode.classList.add("hidden");
+    }
+  });
+}
+
+function formatTripFieldLabel(field) {
+  const labels = {
+    title: "trip title",
+    start_date: "start date",
+    end_date: "end date",
+    timezone: "timezone",
+    traveler_count: "traveler count",
+  };
+
+  return labels[field] ?? field;
 }
 
 function addDaysToDate(date, days) {
   const cursor = new Date(`${date}T00:00:00Z`);
   cursor.setUTCDate(cursor.getUTCDate() + days);
   return cursor.toISOString().slice(0, 10);
+}
+
+function collectPreviewItemChanges(beforeTrip, afterTrip) {
+  if (!beforeTrip || !afterTrip) {
+    return [];
+  }
+
+  const beforeItems = flattenTripItems(beforeTrip);
+  const afterItems = flattenTripItems(afterTrip);
+  const allIds = new Set([...beforeItems.keys(), ...afterItems.keys()]);
+
+  return Array.from(allIds)
+    .map((itemId) => {
+      const before = beforeItems.get(itemId) ?? null;
+      const after = afterItems.get(itemId) ?? null;
+      if (
+        JSON.stringify(toPreviewComparableItem(before?.item ?? null, before?.dayDate))
+        === JSON.stringify(toPreviewComparableItem(after?.item ?? null, after?.dayDate))
+      ) {
+        return null;
+      }
+
+      return {
+        id: itemId,
+        kind: determinePreviewItemChangeKind(before, after),
+        before,
+        after,
+        fieldChanges: describePreviewItemFieldChanges(before?.item ?? null, after?.item ?? null, before?.dayDate, after?.dayDate),
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => comparePreviewChangeMoments(left, right));
+}
+
+function collectPreviewRouteChanges(beforeTrip, afterTrip, changedRouteIds = []) {
+  if (!beforeTrip || !afterTrip) {
+    return [];
+  }
+
+  const beforeRoutes = new Map(beforeTrip.routes.map((route) => [route.route_id, route]));
+  const afterRoutes = new Map(afterTrip.routes.map((route) => [route.route_id, route]));
+  const routeIds = Array.from(new Set([...beforeRoutes.keys(), ...afterRoutes.keys(), ...changedRouteIds]));
+
+  return routeIds
+    .map((routeId) => {
+      const before = beforeRoutes.get(routeId) ?? null;
+      const after = afterRoutes.get(routeId) ?? null;
+      if (JSON.stringify(before) === JSON.stringify(after)) {
+        return null;
+      }
+
+      return {
+        id: routeId,
+        before,
+        after,
+        beforeLabel: before ? describeRouteEndpoints(beforeTrip, before) : null,
+        afterLabel: after ? describeRouteEndpoints(afterTrip, after) : null,
+      };
+    })
+    .filter(Boolean);
+}
+
+function renderPreviewChangeList(itemChanges, routeChanges) {
+  if (!itemChanges.length && !routeChanges.length) {
+    return "<div class=\"diff-meta\">No visible schedule changes.</div>";
+  }
+
+  return `
+    <div class="diff-section">
+      <div class="diff-section-title">Before and after</div>
+      <div class="preview-change-list">
+        ${itemChanges.map((change) => renderPreviewItemChange(change)).join("")}
+        ${routeChanges.map((change) => renderPreviewRouteChange(change)).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderPreviewItemChange(change) {
+  const focusItemId = change.after?.item?.id ?? change.before?.item?.id ?? "";
+  const focusDayDate = change.after?.dayDate ?? change.before?.dayDate ?? "";
+  const title = change.after?.item?.title ?? change.before?.item?.title ?? "Updated item";
+  return `
+    <button
+      type="button"
+      class="preview-change-card ${escapeHtml(change.kind)}"
+      data-preview-focus-item-id="${escapeHtml(focusItemId)}"
+      data-preview-focus-day-date="${escapeHtml(focusDayDate)}">
+      <div class="preview-change-header">
+        <span class="preview-change-badge">${escapeHtml(change.kind)}</span>
+        <strong>${escapeHtml(title)}</strong>
+      </div>
+      <div class="preview-change-columns">
+        <div class="preview-change-column">
+          <div class="preview-change-label">Before</div>
+          ${renderPreviewItemSnapshot(change.before)}
+        </div>
+        <div class="preview-change-column">
+          <div class="preview-change-label">After</div>
+          ${renderPreviewItemSnapshot(change.after)}
+        </div>
+      </div>
+      ${change.fieldChanges.length ? `<div class="preview-change-tags">${change.fieldChanges.map((label) => `<span>${escapeHtml(label)}</span>`).join("")}</div>` : ""}
+    </button>
+  `;
+}
+
+function renderPreviewRouteChange(change) {
+  const nextRoute = change.after ?? change.before;
+  const routeLabel = nextRoute
+    ? `${escapeHtml(nextRoute.mode)} route`
+    : "Route";
+  return `
+    <div class="preview-change-card route-change">
+      <div class="preview-change-header">
+        <span class="preview-change-badge">route</span>
+        <strong>${routeLabel}</strong>
+      </div>
+      <div class="preview-change-columns">
+        <div class="preview-change-column">
+          <div class="preview-change-label">Before</div>
+          <div class="preview-change-line">${escapeHtml(formatRouteSnapshot(change.before, change.beforeLabel))}</div>
+        </div>
+        <div class="preview-change-column">
+          <div class="preview-change-label">After</div>
+          <div class="preview-change-line">${escapeHtml(formatRouteSnapshot(change.after, change.afterLabel))}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderPreviewItemSnapshot(snapshot) {
+  if (!snapshot?.item) {
+    return '<div class="preview-change-line muted">Not present</div>';
+  }
+
+  const timeZone = resolveTripTimeZone(snapshot.trip);
+  const lines = [
+    `${snapshot.dayLabel} - ${localTime(snapshot.item.start_at, timeZone)}-${localTime(snapshot.item.end_at, timeZone)}`,
+    snapshot.item.title,
+  ];
+  if (snapshot.placeName) {
+    lines.push(snapshot.placeName);
+  }
+
+  return lines.map((line) => `<div class="preview-change-line">${escapeHtml(line)}</div>`).join("");
+}
+
+function flattenTripItems(trip) {
+  const placesById = new Map(trip.places.map((place) => [place.place_id, place]));
+  return new Map(
+    trip.days.flatMap((day) =>
+      day.items.map((item) => [
+        item.id,
+        {
+          trip,
+          dayDate: day.date,
+          dayLabel: day.label,
+          item,
+          placeName: item.place_id ? placesById.get(item.place_id)?.name ?? null : null,
+        },
+      ])
+    )
+  );
+}
+
+function determinePreviewItemChangeKind(before, after) {
+  if (!before?.item && after?.item) {
+    return "added";
+  }
+  if (before?.item && !after?.item) {
+    return "removed";
+  }
+  if (before?.dayDate !== after?.dayDate) {
+    return "moved";
+  }
+  return "updated";
+}
+
+function toPreviewComparableItem(item, dayDate) {
+  if (!item) {
+    return null;
+  }
+
+  return {
+    dayDate: dayDate ?? null,
+    title: item.title ?? null,
+    kind: item.kind ?? null,
+    category: item.category ?? null,
+    start_at: item.start_at ?? null,
+    end_at: item.end_at ?? null,
+    place_id: item.place_id ?? null,
+    locked: Boolean(item.locked),
+    status: item.status ?? null,
+  };
+}
+
+function describePreviewItemFieldChanges(beforeItem, afterItem, beforeDayDate, afterDayDate) {
+  const changes = [];
+  if (!beforeItem || !afterItem) {
+    return changes;
+  }
+  if (beforeDayDate !== afterDayDate) changes.push("day");
+  if (beforeItem.start_at !== afterItem.start_at || beforeItem.end_at !== afterItem.end_at) changes.push("time");
+  if (beforeItem.title !== afterItem.title) changes.push("title");
+  if (beforeItem.place_id !== afterItem.place_id) changes.push("place");
+  if (beforeItem.kind !== afterItem.kind) changes.push("kind");
+  if (beforeItem.locked !== afterItem.locked) changes.push("lock");
+  return changes;
+}
+
+function comparePreviewChangeMoments(left, right) {
+  const leftMoment = left.after?.item?.start_at ?? left.before?.item?.start_at ?? "";
+  const rightMoment = right.after?.item?.start_at ?? right.before?.item?.start_at ?? "";
+  return leftMoment.localeCompare(rightMoment);
+}
+
+function describeRouteEndpoints(trip, route) {
+  const items = new Map(trip.days.flatMap((day) => day.items.map((item) => [item.id, item.title])));
+  const fromTitle = items.get(route.from_item_id) ?? "Previous stop";
+  const toTitle = items.get(route.to_item_id) ?? "Next stop";
+  return `${fromTitle} to ${toTitle}`;
+}
+
+function formatRouteSnapshot(route, label) {
+  if (!route) {
+    return "Not present";
+  }
+  return `${label ? `${label} · ` : ""}${route.mode} - ${route.duration_minutes} min`;
 }
 
 function syncTripListEntry(trip) {
@@ -1840,38 +2974,75 @@ function getAdjacentItem(trip, dayDate, itemId, direction) {
   return items[index + direction] ?? null;
 }
 
-function renderConflicts(trip, day) {
+function renderConflicts(trip, day, options = {}) {
   const itemIds = new Set((day?.items ?? []).map((item) => item.id));
   const conflicts = trip.conflicts.filter((conflict) => {
+    if (options.conflictIds?.length) {
+      return options.conflictIds.includes(conflict.id);
+    }
     if (conflict.item_ids.length === 0) {
       return Boolean(day?.date && conflict.id.includes(day.date));
     }
     return conflict.item_ids.some((itemId) => itemIds.has(itemId));
   });
+
   if (conflicts.length === 0) {
-    return "<div class=\"diff-meta\">No current conflicts on this day.</div>";
+    return `<div class="diff-meta">${escapeHtml(options.emptyText ?? "No current conflicts on this day.")}</div>`;
   }
 
+  return renderConflictSnapshotList(
+    options.title ?? "Conflicts",
+    conflicts.map((conflict) => ({
+      id: conflict.id,
+      severity: conflict.severity,
+      message: conflict.message,
+      resolution_hint: conflict.resolution_hint,
+      item_ids: conflict.item_ids,
+      day_date: findConflictDayDate(trip, conflict),
+      repairable: isRepairableConflict(conflict),
+    })),
+    {
+      highlightedConflictId: options.highlightedConflictId ?? null,
+    }
+  );
+}
+
+function renderConflictSnapshotList(title, conflicts, options = {}) {
   return `
-    <ul class="diff-list">
-      ${conflicts
-        .map((conflict) => {
-          const repairButton = isRepairableConflict(conflict)
-            ? `<button type="button" class="button button-small" data-conflict-action="repair" data-conflict-id="${escapeHtml(conflict.id)}" data-item-id="${escapeHtml(conflict.item_ids[0] ?? "")}" data-day-date="${escapeHtml(day?.date ?? "")}">Repair</button>`
-            : "";
-          const hint = conflict.resolution_hint ? `<div class="diff-meta">${escapeHtml(conflict.resolution_hint)}</div>` : "";
-          return `
-            <li class="${conflict.severity === "error" ? "conflict-error" : ""}">
-              <div class="conflict-row">
-                <span>${escapeHtml(conflict.message)}</span>
-                ${repairButton}
-              </div>
-              ${hint}
-            </li>
-          `;
-        })
-        .join("")}
-    </ul>
+    <div class="diff-section">
+      <div class="diff-section-title">${escapeHtml(title)}</div>
+      <ul class="diff-list conflict-list">
+        ${conflicts
+          .map((conflict) => {
+            const activeClass = conflict.id === options.highlightedConflictId ? " active" : "";
+            const locateButton = options.allowFocus === false ? "" : `
+              <button
+                type="button"
+                class="button button-small"
+                data-conflict-action="focus"
+                data-conflict-id="${escapeHtml(conflict.id)}">
+                Locate
+              </button>
+            `;
+            const repairButton = options.allowRepair === false
+              ? ""
+              : conflict.repairable
+              ? `<button type="button" class="button button-small" data-conflict-action="repair" data-conflict-id="${escapeHtml(conflict.id)}" data-item-id="${escapeHtml(conflict.item_ids?.[0] ?? "")}" data-day-date="${escapeHtml(conflict.day_date ?? "")}">Repair</button>`
+              : "";
+            const hint = conflict.resolution_hint ? `<div class="diff-meta">${escapeHtml(conflict.resolution_hint)}</div>` : "";
+            return `
+              <li class="conflict-entry${activeClass}${conflict.severity === "error" ? " conflict-error" : ""}">
+                <div class="conflict-row">
+                  <span>${escapeHtml(conflict.message)}</span>
+                  ${(locateButton || repairButton) ? `<div class="conflict-actions">${locateButton}${repairButton}</div>` : ""}
+                </div>
+                ${hint}
+              </li>
+            `;
+          })
+          .join("")}
+      </ul>
+    </div>
   `;
 }
 
@@ -1883,6 +3054,51 @@ function isRepairableConflict(conflict) {
     "meal_window_missing",
     "pace_limit_exceeded",
   ].includes(conflict.type);
+}
+
+function findConflictDayDate(trip, conflict) {
+  if (!trip || !conflict) {
+    return null;
+  }
+
+  if (conflict.item_ids?.length) {
+    const matchingDay = trip.days.find((day) => day.items.some((item) => conflict.item_ids.includes(item.id)));
+    return matchingDay?.date ?? null;
+  }
+
+  const dateMatch = conflict.id?.match(/(\d{4}-\d{2}-\d{2})$/);
+  return dateMatch?.[1] ?? null;
+}
+
+function resolveHighlightedConflict(trip, highlightedConflictId) {
+  if (!trip || !highlightedConflictId) {
+    return null;
+  }
+
+  const conflict = trip.conflicts.find((candidate) => candidate.id === highlightedConflictId) ?? null;
+  if (!conflict && state.highlightedConflictId === highlightedConflictId) {
+    clearConflictHighlight();
+  }
+  return conflict;
+}
+
+function collectConflictSnapshots(trip, conflictIds = []) {
+  if (!trip || !Array.isArray(conflictIds)) {
+    return [];
+  }
+
+  return conflictIds
+    .map((conflictId) => trip.conflicts.find((candidate) => candidate.id === conflictId))
+    .filter(Boolean)
+    .map((conflict) => ({
+      id: conflict.id,
+      severity: conflict.severity,
+      message: conflict.message,
+      resolution_hint: conflict.resolution_hint,
+      item_ids: conflict.item_ids,
+      day_date: findConflictDayDate(trip, conflict),
+      repairable: isRepairableConflict(conflict),
+    }));
 }
 
 function buildQuickActionInput(action, dayDate) {

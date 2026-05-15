@@ -58,27 +58,64 @@
           <div class="panel-kicker">Create Trip</div>
           <div class="trip-browser-heading">
             <h2>Start a new trip</h2>
-            <p>Set the basics first. Then open a clean workspace and start shaping the itinerary.</p>
+            <p>Paste a trip brief or fill the basics by hand. Then open a clean workspace and start shaping the itinerary.</p>
           </div>
           <form class="trip-create-form" id="tripCreateForm">
-            <label>
+            <div class="trip-import-panel">
+              <label class="trip-create-field">
+                <span>Paste a plan</span>
+                <textarea
+                  id="tripImportInput"
+                  name="trip_import_input"
+                  rows="7"
+                  placeholder="Paste a trip outline, notes, or an AI answer here. I’ll extract the trip title, dates, timezone, and traveler count when possible."
+                ></textarea>
+              </label>
+              <div class="trip-create-toolbar">
+                <button type="button" class="button" id="tripImportParseButton">Extract trip details</button>
+              </div>
+              <div class="trip-import-status hidden" id="tripImportStatus" role="status" aria-live="polite" aria-atomic="true"></div>
+              <div class="trip-import-summary hidden" id="tripImportSummary"></div>
+              <div class="trip-import-followup hidden" id="tripImportFollowUp">
+                <div class="trip-import-followup-prompt" id="tripImportFollowUpPrompt"></div>
+                <label class="trip-create-field">
+                  <span>Answer the follow-up</span>
+                  <textarea
+                    id="tripImportFollowUpInput"
+                    name="trip_import_follow_up"
+                    rows="3"
+                    placeholder="Start date: 2026-06-10"
+                  ></textarea>
+                </label>
+                <div class="trip-create-toolbar">
+                  <button type="button" class="button" id="tripImportFollowUpButton">Update extraction</button>
+                </div>
+                <div class="trip-import-followup-history hidden" id="tripImportFollowUpHistory"></div>
+              </div>
+              <div class="trip-import-itinerary hidden" id="tripImportItinerary"></div>
+            </div>
+            <label class="trip-create-field" data-trip-field="title">
               <span>Trip title</span>
               <input type="text" id="tripCreateTitle" name="title" maxlength="120" placeholder="Tokyo Spring Weekender…" autocomplete="off" required>
+              <small class="trip-field-hint hidden"></small>
             </label>
             <div class="trip-create-grid">
-              <label>
+              <label class="trip-create-field" data-trip-field="start_date">
                 <span>Start date</span>
                 <input type="date" id="tripCreateStartDate" name="start_date" required>
+                <small class="trip-field-hint hidden"></small>
               </label>
-              <label>
+              <label class="trip-create-field" data-trip-field="end_date">
                 <span>End date</span>
                 <input type="date" id="tripCreateEndDate" name="end_date" required>
+                <small class="trip-field-hint hidden"></small>
               </label>
             </div>
             <div class="trip-create-grid">
-              <label>
+              <label class="trip-create-field" data-trip-field="timezone">
                 <span>Timezone</span>
                 <select id="tripCreateTimezone" name="timezone" autocomplete="off" required>
+                  <option value="">Select timezone…</option>
                   <option value="America/New_York">US East</option>
                   <option value="America/Chicago">US Central</option>
                   <option value="America/Denver">US Mountain</option>
@@ -88,14 +125,16 @@
                   <option value="Asia/Tokyo">Tokyo</option>
                   <option value="Asia/Shanghai">Shanghai</option>
                 </select>
+                <small class="trip-field-hint hidden"></small>
               </label>
-              <label>
+              <label class="trip-create-field" data-trip-field="traveler_count">
                 <span>Travelers</span>
                 <input type="number" id="tripCreateTravelers" name="traveler_count" min="1" max="12" value="2" required>
+                <small class="trip-field-hint hidden"></small>
               </label>
             </div>
             <div class="trip-create-toolbar">
-              <button type="submit" class="button button-primary">Create Trip</button>
+              <button type="submit" class="button button-primary" id="tripCreateSubmitButton">Create Trip</button>
               <button type="button" class="button" id="tripBrowserCloseButton">Close</button>
             </div>
           </form>

@@ -132,6 +132,7 @@ export function buildConflicts(itinerary: Itinerary): ItineraryConflict[] {
 
   for (const day of itinerary.days) {
     const dayItems = [...day.items].sort((left, right) => compareIso(left.start_at, right.start_at));
+    const dayItemsById = new Map(dayItems.map((dayItem) => [dayItem.id, dayItem]));
 
     for (let index = 0; index < dayItems.length; index += 1) {
       const item = dayItems[index];
@@ -148,17 +149,18 @@ export function buildConflicts(itinerary: Itinerary): ItineraryConflict[] {
         });
       }
 
-      if (previous && item.route_id) {
+      if (item.route_id) {
         const route = itinerary.routes.find((candidate) => candidate.route_id === item.route_id);
-        if (route) {
-          const gapMinutes = Math.max(0, minutesBetween(previous.end_at, item.start_at));
+        const routeOrigin = route ? dayItemsById.get(route.from_item_id) : undefined;
+        if (route && routeOrigin && route.to_item_id === item.id) {
+          const gapMinutes = Math.max(0, minutesBetween(routeOrigin.end_at, item.start_at));
           if (gapMinutes < route.duration_minutes) {
             conflicts.push({
               id: `travel_${route.route_id}`,
               type: "travel_time_underestimated",
               severity: "warning",
-              message: `Travel from ${previous.title} to ${item.title} needs ${route.duration_minutes} minutes, but only ${gapMinutes} minutes are scheduled.`,
-              item_ids: [previous.id, item.id],
+              message: `Travel from ${routeOrigin.title} to ${item.title} needs ${route.duration_minutes} minutes, but only ${gapMinutes} minutes are scheduled.`,
+              item_ids: [routeOrigin.id, item.id],
               resolution_hint: "Move the next item later or choose a faster transport mode.",
             });
           }
@@ -169,7 +171,7 @@ export function buildConflicts(itinerary: Itinerary): ItineraryConflict[] {
               type: "pace_limit_exceeded",
               severity: "warning",
               message: `Walking segment to ${item.title} is ${route.duration_minutes} minutes, above the preferred ${itinerary.preferences.max_walk_minutes} minute limit.`,
-              item_ids: [previous.id, item.id],
+              item_ids: [routeOrigin.id, item.id],
               resolution_hint: "Switch the segment to taxi, transit, or drive.",
             });
           }

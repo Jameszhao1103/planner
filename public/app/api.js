@@ -7,12 +7,34 @@ export async function requestJson(url, options = {}) {
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
-  const payload = await response.json();
-  if (!response.ok || payload.ok === false) {
-    throw new Error(payload.error?.message ?? `Request failed: ${response.status}`);
+  const payload = await readJsonPayload(response);
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.error?.message ?? `Request failed: ${response.status}`);
   }
 
-  return payload.data;
+  return payload?.data;
+}
+
+async function readJsonPayload(response) {
+  const text = await response.text();
+  if (!text) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: {
+          message: `Request failed: ${response.status} ${response.statusText}`.trim(),
+        },
+      };
+    }
+
+    throw error;
+  }
 }
 
 export function triggerDownload(url) {

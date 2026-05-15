@@ -21,6 +21,8 @@ The goal is simple: let AI help with travel planning without taking control away
 - synchronized `Map`, `Timeline`, `Plan`, and `Selection` views
 - direct edits for lock, unlock, move, reorder, and timeline drag
 - preview / apply / reject flow for assistant-generated changes
+- new-trip intake that turns pasted plans into trip metadata and flags missing fields
+- imported plans can create full day/item itineraries instead of only an empty trip shell
 - replace and insert places through search + diff previews
 - route and opening-hours validation
 - conflict repair previews for overlap, travel-time, meal-gap, and pacing issues
@@ -98,6 +100,7 @@ flowchart LR
 - TypeScript planner modules shared across runtime layers
 - Google Maps / Places / Routes integration
 - OpenAI-based command translation with rule-based fallback
+- OpenAI-assisted trip intake with rule-based fallback
 - file-backed local persistence for the current MVP
 
 ## Quick Start
@@ -180,6 +183,7 @@ The important detail is that assistant requests are translated into structured p
 Main local routes:
 
 - `GET /api/trips/:tripId`
+- `POST /api/trips/intake/parse`
 - `GET /api/places/search`
 - `POST /api/trips/:tripId/commands/preview`
 - `POST /api/trips/:tripId/commands/execute`

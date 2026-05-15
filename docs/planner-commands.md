@@ -30,6 +30,9 @@ Each user request follows the same path:
 - `move_item`
   - Move an existing item to a new time while preserving its place.
   - Example: "Push the museum visit to 3 PM."
+- `reorder_item`
+  - Move an item before or after another item in the same day while preserving the structured mutation pipeline.
+  - Example: "Move the coffee stop before the museum."
 - `optimize_day`
   - Reorder flexible items for route efficiency while respecting locks.
   - Example: "Reoptimize Tuesday."
@@ -51,9 +54,21 @@ Each user request follows the same path:
 - `delete_item`
   - Remove an item entirely.
   - Example: "Drop the brewery stop."
+- `restore_item`
+  - Restore a previously deleted item from an undo payload.
+  - This is primarily an internal undo command rather than a free-form assistant target.
 - `fill_meal`
   - A specialized insert that looks for a meal candidate near the current route.
   - Example: "Add lunch near Biltmore."
+
+### Trip structure
+
+- `add_day`
+  - Extend the trip by adding an empty day.
+  - Example: "Add one more day to the trip."
+- `delete_day`
+  - Remove an empty day from the trip.
+  - Example: "Remove the extra empty day."
 
 ### Transit and repair
 

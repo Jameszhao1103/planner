@@ -175,8 +175,8 @@ export function buildTimelineLayout(items, window, dayDate, timeZone) {
   const rows = Math.max(1, rowEnds.length);
   const eventAreaHeight =
     TIMELINE_TOP_PADDING +
-    rows * TIMELINE_CARD_HEIGHT +
-    Math.max(0, rows - 1) * TIMELINE_ROW_GAP;
+    Math.max(0, rows - 1) * (TIMELINE_ROW_HEIGHT + TIMELINE_ROW_GAP) +
+    TIMELINE_CARD_HEIGHT;
   const transportTop = eventAreaHeight + TIMELINE_TRANSPORT_GAP;
 
   return {
@@ -302,15 +302,17 @@ function buildDayFlow(trip, day) {
   const items = day.items
     .slice()
     .sort((left, right) => new Date(left.start_at).getTime() - new Date(right.start_at).getTime());
+  const itemsById = new Map(items.map((item) => [item.id, item]));
   const flow = [];
 
   items.forEach((item, index) => {
     const previous = index > 0 ? items[index - 1] : null;
     const route = item.route_id ? routesById.get(item.route_id) : undefined;
-    const gapMinutes = previous ? exactDurationMinutes(previous.end_at, item.start_at) : 0;
+    const routeOrigin = route ? itemsById.get(route.from_item_id) : previous;
+    const gapMinutes = routeOrigin ? exactDurationMinutes(routeOrigin.end_at, item.start_at) : 0;
 
-    if (shouldInsertSyntheticTransit(previous, item, route, gapMinutes)) {
-      flow.push(makeTransitFlowBlock(trip, previous, item, route, placesById, gapMinutes));
+    if (shouldInsertSyntheticTransit(routeOrigin, item, route, gapMinutes)) {
+      flow.push(makeTransitFlowBlock(trip, routeOrigin, item, route, placesById, gapMinutes));
     }
 
     flow.push(makeItemFlowBlock(item, placesById));
@@ -323,7 +325,6 @@ function shouldInsertSyntheticTransit(previous, current, route, gapMinutes) {
   return Boolean(
     previous &&
       route &&
-      gapMinutes > 0 &&
       route.from_item_id === previous.id &&
       route.to_item_id === current.id &&
       current.kind !== "transit" &&
@@ -336,10 +337,12 @@ function makeTransitFlowBlock(trip, previous, current, route, placesById, gapMin
   return {
     id: `flow_route_${route.route_id}`,
     kind: "synthetic_transit",
+    fromItemId: previous.id,
+    toItemId: current.id,
     title: `${transportLabel(route.mode)} to ${destination?.name ?? current.title}`,
-    timelineTitle: route.mode.toLowerCase(),
+    timelineTitle: `${route.mode.toLowerCase()} ${route.duration_minutes}m`,
     start_at: previous.end_at,
-    end_at: current.start_at,
+    end_at: shiftIsoByMinutes(previous.end_at, Math.max(1, route.duration_minutes)),
     warningCount: countRouteWarnings(trip, previous.id, current.id),
     meta: buildTransitMeta(route, gapMinutes),
     className: "travel-block",
@@ -365,6 +368,8 @@ function buildTransitMeta(route, gapMinutes) {
   const parts = [`${transportLabel(route.mode)} · route ${route.duration_minutes} min`];
   if (gapMinutes > route.duration_minutes) {
     parts.push(`scheduled window ${gapMinutes} min`);
+  } else if (gapMinutes < route.duration_minutes) {
+    parts.push(`scheduled gap ${gapMinutes} min`);
   }
   return parts.join(" · ");
 }
@@ -445,11 +450,12 @@ function standardActivityTimelineLabel(item, place) {
   if (normalized.includes("biltmore")) return "Bilt";
   if (normalized.includes("carrier park") || normalized.includes("park walk")) return "Park";
   if (normalized.includes("museum")) return "Muse";
+  if (place?.name) return shortenTimelineLabel(place.name);
   if (item.category === "shopping") return "Shop";
   if (item.category === "park") return "Park";
-  if (item.category === "landmark") return "Stop";
+  if (item.category && item.category !== "activity") return capitalize(item.category);
   if (item.category === "sightseeing") return "Walk";
-  return "Stop";
+  return shortenTimelineLabel(item.title);
 }
 
 function standardFallbackTimelineLabel(item, place) {
