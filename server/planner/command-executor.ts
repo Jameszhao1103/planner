@@ -14,7 +14,9 @@ import {
 } from "./time.ts";
 import type {
   CommandExecutionContext,
+  ConflictReviewDecision,
   Itinerary,
+  ItineraryConflict,
   ItineraryDay,
   ItineraryItem,
   ItineraryItemKind,
@@ -73,6 +75,9 @@ async function executeCommand(
       return;
     case "update_item":
       updateItem(itinerary, command);
+      return;
+    case "review_conflict":
+      reviewConflict(itinerary, command, context);
       return;
     case "add_day":
       addDay(itinerary, command);
@@ -217,6 +222,78 @@ function updateItem(itinerary: Itinerary, command: PlannerCommand): void {
       );
     }
   });
+}
+
+function reviewConflict(
+  itinerary: Itinerary,
+  command: PlannerCommand,
+  context: CommandExecutionContext
+): void {
+  const payload = command.payload ?? {};
+  const restoredDecision = payload.review_decision;
+  const conflictId =
+    typeof payload.conflict_id === "string"
+      ? payload.conflict_id
+      : typeof command.item_id === "string"
+        ? command.item_id
+        : null;
+
+  if (!conflictId) {
+    throw new PlannerError("invalid_command", "review_conflict requires payload.conflict_id.");
+  }
+
+  if (payload.decision === "clear") {
+    itinerary.review_decisions = (itinerary.review_decisions ?? []).filter(
+      (decision) => decision.conflict_id !== conflictId
+    );
+    return;
+  }
+
+  if (restoredDecision && typeof restoredDecision === "object") {
+    upsertReviewDecision(itinerary, structuredClone(restoredDecision) as ConflictReviewDecision);
+    return;
+  }
+
+  if (payload.decision !== undefined && payload.decision !== "accepted") {
+    throw new PlannerError("invalid_command", "review_conflict only supports payload.decision of accepted or clear.");
+  }
+
+  const conflict = itinerary.conflicts.find((candidate) => candidate.id === conflictId);
+  if (!conflict) {
+    throw new PlannerError("invalid_command", `Conflict not found: ${conflictId}`);
+  }
+
+  const reason = typeof payload.reason === "string"
+    ? payload.reason.trim()
+    : command.reason.trim();
+  const decision: ConflictReviewDecision = {
+    id: createId("review"),
+    conflict_id: conflict.id,
+    decision: "accepted",
+    decided_at: context.now.toISOString(),
+    decided_by: "user",
+    conflict_type: conflict.type,
+    conflict_message: conflict.message,
+    item_ids: [...conflict.item_ids],
+    day_date: findConflictDayDate(itinerary, conflict) ?? undefined,
+    reason: reason || undefined,
+  };
+
+  upsertReviewDecision(itinerary, decision);
+}
+
+function upsertReviewDecision(itinerary: Itinerary, decision: ConflictReviewDecision): void {
+  itinerary.review_decisions = itinerary.review_decisions ?? [];
+  const index = itinerary.review_decisions.findIndex(
+    (candidate) => candidate.conflict_id === decision.conflict_id
+  );
+
+  if (index === -1) {
+    itinerary.review_decisions.push(decision);
+    return;
+  }
+
+  itinerary.review_decisions.splice(index, 1, decision);
 }
 
 function addDay(itinerary: Itinerary, command: PlannerCommand): void {
@@ -854,6 +931,17 @@ function findItemLocation(
 
 function findDay(itinerary: Itinerary, dayDate?: string): ItineraryDay | undefined {
   return dayDate ? itinerary.days.find((candidate) => candidate.date === dayDate) : undefined;
+}
+
+function findConflictDayDate(itinerary: Itinerary, conflict: ItineraryConflict): string | null {
+  if (conflict.item_ids.length > 0) {
+    const matchingDay = itinerary.days.find((day) =>
+      day.items.some((item) => conflict.item_ids.includes(item.id))
+    );
+    return matchingDay?.date ?? null;
+  }
+
+  return extractDayDateFromConflict(conflict.id);
 }
 
 function resolveCommandDay(itinerary: Itinerary, command: PlannerCommand): ItineraryDay {

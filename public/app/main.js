@@ -4,6 +4,7 @@ import { createMapController } from "./map.js";
 import { renderPlaceResolutionQueue } from "./place-resolution.js";
 import { defaultStartTimeForInsertSession, escapeHtml, eventClass, itemTypeLabel, localTime, minutesRelativeToDay, replaceIsoTime, resolveTripTimeZone, shiftIsoByMinutes } from "./shared.js";
 import { attachTimelineInteractions, buildPlanFlow, buildTimelineHourMarks, buildTimelineLayout, buildTimelineModel, computeTimelineWindow, exactDurationMinutes, flowBlockClass, percentFromTimelineMinute, timelineBlockTitle } from "./timeline.js";
+import { isConflictAccepted, renderTripQualitySummary } from "./trip-quality.js";
 
 const state = {
   tripId: null,
@@ -15,6 +16,7 @@ const state = {
   selectedItemId: null,
   highlightedConflictId: null,
   ignoredConflictIds: new Set(),
+  showReviewedConflicts: false,
   scheduleTab: "timeline",
   workspaceTab: "selection",
   pending: false,
@@ -33,6 +35,7 @@ const state = {
   tripBrowserMode: "browse",
   tripIntake: createEmptyTripIntakeState(),
 };
+const APP_DOCUMENT_TITLE = "Itinerary Workspace";
 const initialRouteState = readUrlState();
 const UI_LOCALE = globalThis.navigator?.language || "en-US";
 const BROWSER_TIME_ZONE = resolveBrowserTimeZone();
@@ -76,6 +79,7 @@ const elements = {
   tripSubtitle: document.querySelector("#tripSubtitle"),
   tripTitleForm: document.querySelector("#tripTitleForm"),
   tripTitleInput: document.querySelector("#tripTitleInput"),
+  tripQuality: document.querySelector("#tripQuality"),
   editTripTitleButton: document.querySelector("#editTripTitleButton"),
   cancelTripTitleButton: document.querySelector("#cancelTripTitleButton"),
   metaPills: document.querySelector("#metaPills"),
@@ -569,22 +573,47 @@ elements.assistantDiff.addEventListener("click", async (event) => {
     return;
   }
 
-  const clearIgnoredTarget = event.target.closest("[data-conflict-action='clear-ignored']");
-  if (clearIgnoredTarget) {
+  const showReviewedTarget = event.target.closest("[data-conflict-action='show-reviewed']");
+  if (showReviewedTarget) {
+    state.showReviewedConflicts = true;
     state.ignoredConflictIds.clear();
     clearConflictHighlight();
     render();
-    state.statusMessage = "Kept conflicts are visible again.";
+    state.statusMessage = "Kept conflicts are visible.";
     state.statusTone = "neutral";
     renderWorkspaceNotice();
     elements.assistantStatus.textContent = state.statusMessage;
     return;
   }
 
-  const ignoreTarget = event.target.closest("[data-conflict-action='ignore']");
-  if (ignoreTarget) {
-    const conflictId = ignoreTarget.dataset.conflictId;
+  const reviewTarget = event.target.closest("[data-conflict-action='review']");
+  if (reviewTarget) {
+    const conflictId = reviewTarget.dataset.conflictId;
     if (!conflictId) {
+      return;
+    }
+
+    const baseConflict = state.trip?.conflicts?.find((conflict) => conflict.id === conflictId) ?? null;
+    if (baseConflict) {
+      await executeImmediately({
+        commands: [
+          {
+            command_id: `cmd_review_${Date.now()}`,
+            action: "review_conflict",
+            reason: "Keep conflict as-is",
+            payload: {
+              conflict_id: conflictId,
+              decision: "accepted",
+              reason: "User accepted this conflict as-is.",
+            },
+          },
+        ],
+      }, {
+        pendingMessage: "Saving review decision…",
+        successMessage: "Conflict kept as-is.",
+        workspaceTab: "assistant",
+        clearSearch: false,
+      });
       return;
     }
 
@@ -593,10 +622,38 @@ elements.assistantDiff.addEventListener("click", async (event) => {
       clearConflictHighlight();
     }
     render();
-    state.statusMessage = "Conflict kept as-is for this session.";
+    state.statusMessage = "Preview-only conflict hidden for this session.";
     state.statusTone = "neutral";
     renderWorkspaceNotice();
     elements.assistantStatus.textContent = state.statusMessage;
+    return;
+  }
+
+  const reopenReviewTarget = event.target.closest("[data-conflict-action='reopen-review']");
+  if (reopenReviewTarget) {
+    const conflictId = reopenReviewTarget.dataset.conflictId;
+    if (!conflictId) {
+      return;
+    }
+
+    await executeImmediately({
+      commands: [
+        {
+          command_id: `cmd_reopen_${Date.now()}`,
+          action: "review_conflict",
+          reason: "Reopen kept conflict",
+          payload: {
+            conflict_id: conflictId,
+            decision: "clear",
+          },
+        },
+      ],
+    }, {
+      pendingMessage: "Reopening conflict…",
+      successMessage: "Conflict reopened.",
+      workspaceTab: "assistant",
+      clearSearch: false,
+    });
     return;
   }
 
@@ -1181,6 +1238,7 @@ async function loadTrip(nextTripId = state.tripId) {
     state.preview = null;
     state.previewMeta = null;
     state.ignoredConflictIds.clear();
+    state.showReviewedConflicts = false;
     clearConflictHighlight();
     state.debugEnabled = false;
     render();
@@ -1197,6 +1255,7 @@ async function loadTrip(nextTripId = state.tripId) {
   state.previewMeta = null;
   if (!isSameTrip) {
     state.ignoredConflictIds.clear();
+    state.showReviewedConflicts = false;
   }
   reconcileIgnoredConflicts(payload.trip);
   clearHistory();
@@ -1335,7 +1394,7 @@ function renderHeader(trip, creating) {
     elements.tripTitleKicker.textContent = "Planning setup";
     elements.tripTitle.textContent = "Create a New Trip";
     elements.tripSubtitle.textContent = "Paste a trip brief or fill the fields directly before opening a new workspace.";
-    document.title = "Create a New Trip";
+    document.title = APP_DOCUMENT_TITLE;
     return;
   }
 
@@ -1343,14 +1402,14 @@ function renderHeader(trip, creating) {
     elements.tripTitleKicker.textContent = "AI-assisted itinerary editor";
     elements.tripTitle.textContent = "Trip Workspace";
     elements.tripSubtitle.textContent = "Open a saved itinerary or start a new draft.";
-    document.title = "Trip Workspace";
+    document.title = APP_DOCUMENT_TITLE;
     return;
   }
 
   elements.tripTitleKicker.textContent = "AI-assisted itinerary editor";
   elements.tripTitle.textContent = trip.title;
   elements.tripSubtitle.textContent = state.preview ? "Preview mode" : "";
-  document.title = trip.title;
+  document.title = APP_DOCUMENT_TITLE;
 }
 
 function renderTitleEditor() {
@@ -1368,17 +1427,22 @@ function renderTitleEditor() {
 function renderMeta(trip, creating = false) {
   if (!trip || creating) {
     elements.metaPills.innerHTML = "";
+    elements.tripQuality.innerHTML = "";
+    elements.tripQuality.classList.add("hidden");
     return;
   }
 
   const items = trip.days.flatMap((day) => day.items);
+  const openConflictCount = trip.conflicts.filter((conflict) => !isConflictAccepted(trip, conflict.id)).length;
   elements.metaPills.innerHTML = [
     pill(formatDateRange(trip.start_date, trip.end_date)),
     pill(formatCountLabel(trip.travelers?.length ?? 0, "traveler")),
     pill(formatCountLabel(items.filter((item) => item.locked).length, "locked stop", "locked stops")),
-    pill(formatCountLabel(trip.conflicts.length, "conflict")),
+    pill(formatCountLabel(openConflictCount, "open conflict")),
     state.preview ? pill("Preview active") : "",
   ].join("");
+  elements.tripQuality.innerHTML = renderTripQualitySummary(trip);
+  elements.tripQuality.classList.remove("hidden");
 }
 
 function renderTripBrowser() {
@@ -1388,6 +1452,7 @@ function renderTripBrowser() {
   elements.grid.classList.toggle("hidden", creating);
   elements.globalDaySwitcher.classList.toggle("hidden", creating);
   elements.metaPills.classList.toggle("hidden", creating);
+  elements.tripQuality.classList.toggle("hidden", creating);
   elements.tripBrowserToggleButton.classList.toggle("button-primary", state.tripBrowserOpen && state.tripBrowserMode === "browse");
   elements.newTripToggleButton.classList.toggle("button-primary", creating);
   elements.tripBrowserCloseButton.textContent = creating ? "Back to trips" : "Close";
@@ -1686,7 +1751,7 @@ function getDayTimingConflicts(trip, day) {
 
   const itemIds = new Set((day.items ?? []).map((item) => item.id));
   return (trip.conflicts ?? []).filter((conflict) => {
-    if (isConflictIgnored(conflict.id)) {
+    if (isConflictHidden(trip, conflict.id)) {
       return false;
     }
 
@@ -3446,10 +3511,10 @@ function renderConflicts(trip, day, options = {}) {
   });
   const conflicts = options.allowIgnore === false
     ? allConflicts
-    : allConflicts.filter((conflict) => !isConflictIgnored(conflict.id));
+    : allConflicts.filter((conflict) => !isConflictHidden(trip, conflict.id));
   const ignoredNote = options.allowIgnore === false
     ? ""
-    : renderIgnoredConflictsNote(allConflicts.length - conflicts.length);
+    : renderHiddenConflictsNote(allConflicts.length - conflicts.length);
 
   if (conflicts.length === 0) {
     return `
@@ -3472,6 +3537,7 @@ function renderConflicts(trip, day, options = {}) {
       item_ids: conflict.item_ids,
       day_date: findConflictDayDate(trip, conflict),
       repairable: isRepairableConflict(conflict),
+      reviewed: isConflictAccepted(trip, conflict.id),
     })),
     {
       highlightedConflictId: options.highlightedConflictId ?? null,
@@ -3484,7 +3550,7 @@ function renderConflicts(trip, day, options = {}) {
 function renderConflictSnapshotList(title, conflicts, options = {}) {
   const visibleConflicts = conflicts
     .map(enrichConflictSnapshot)
-    .filter((conflict) => options.allowIgnore === false || !isConflictIgnored(conflict.id))
+    .filter((conflict) => options.allowIgnore === false || !isConflictHidden(null, conflict.id, conflict.reviewed))
     .sort((left, right) => left.grade.rank - right.grade.rank || left.message.localeCompare(right.message));
 
   if (visibleConflicts.length === 0) {
@@ -3509,6 +3575,8 @@ function renderConflictSnapshotList(title, conflicts, options = {}) {
             `;
             const repairButton = options.allowRepair === false
               ? ""
+              : conflict.reviewed
+              ? ""
               : conflict.repairable
               ? `<button type="button" class="button button-small" data-conflict-action="repair" data-conflict-id="${escapeHtml(conflict.id)}" data-item-id="${escapeHtml(conflict.item_ids?.[0] ?? "")}" data-day-date="${escapeHtml(conflict.day_date ?? "")}">Fix</button>`
               : "";
@@ -3516,17 +3584,19 @@ function renderConflictSnapshotList(title, conflicts, options = {}) {
               <button
                 type="button"
                 class="button button-small"
-                data-conflict-action="ignore"
+                data-conflict-action="${conflict.reviewed ? "reopen-review" : "review"}"
                 data-conflict-id="${escapeHtml(conflict.id)}">
-                Keep as-is
+                ${conflict.reviewed ? "Reopen" : "Keep as-is"}
               </button>
             `;
             const hint = conflict.resolution_hint ? `<div class="diff-meta">${escapeHtml(conflict.resolution_hint)}</div>` : "";
+            const keptBadge = conflict.reviewed ? '<span class="conflict-kept">Kept</span>' : "";
             return `
-              <li class="conflict-entry ${escapeHtml(conflict.grade.level)}${activeClass}${conflict.severity === "error" ? " conflict-error" : ""}">
+              <li class="conflict-entry ${escapeHtml(conflict.grade.level)}${conflict.reviewed ? " reviewed" : ""}${activeClass}${conflict.severity === "error" ? " conflict-error" : ""}">
                 <div class="conflict-row">
                   <span class="conflict-message">
                     <span class="conflict-grade ${escapeHtml(conflict.grade.level)}">${escapeHtml(conflict.grade.label)}</span>
+                    ${keptBadge}
                     <span>${escapeHtml(conflict.message)}</span>
                   </span>
                   ${(locateButton || repairButton || ignoreButton) ? `<div class="conflict-actions">${locateButton}${repairButton}${ignoreButton}</div>` : ""}
@@ -3583,7 +3653,7 @@ function classifyConflict(conflict) {
   };
 }
 
-function renderIgnoredConflictsNote(count) {
+function renderHiddenConflictsNote(count) {
   if (count <= 0) {
     return "";
   }
@@ -3591,13 +3661,22 @@ function renderIgnoredConflictsNote(count) {
   return `
     <span class="conflict-ignored-note">
       ${escapeHtml(formatCountLabel(count, "conflict"))} kept as-is.
-      <button type="button" class="button button-small" data-conflict-action="clear-ignored">Show kept</button>
+      <button type="button" class="button button-small" data-conflict-action="show-reviewed">Show kept</button>
     </span>
   `;
 }
 
-function isConflictIgnored(conflictId) {
-  return Boolean(conflictId && state.ignoredConflictIds.has(conflictId));
+function isConflictHidden(trip, conflictId, reviewed = false) {
+  if (!conflictId) {
+    return false;
+  }
+
+  if (state.ignoredConflictIds.has(conflictId)) {
+    return true;
+  }
+
+  const accepted = reviewed || isConflictAccepted(trip, conflictId);
+  return accepted && !state.showReviewedConflicts;
 }
 
 function reconcileIgnoredConflicts(trip) {
@@ -3667,6 +3746,7 @@ function collectConflictSnapshots(trip, conflictIds = []) {
       item_ids: conflict.item_ids,
       day_date: findConflictDayDate(trip, conflict),
       repairable: isRepairableConflict(conflict),
+      reviewed: isConflictAccepted(trip, conflict.id),
     }));
 }
 

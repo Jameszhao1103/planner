@@ -78,6 +78,13 @@
         "$ref": "#/$defs/conflict"
       }
     },
+    "review_decisions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/reviewDecision"
+      },
+      "default": []
+    },
     "markdown_sections": {
       "type": "array",
       "items": {
@@ -570,6 +577,72 @@
           }
         },
         "resolution_hint": {
+          "type": "string"
+        }
+      }
+    },
+    "reviewDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "conflict_id",
+        "decision",
+        "decided_at",
+        "decided_by"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "conflict_id": {
+          "type": "string"
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "accepted"
+          ]
+        },
+        "decided_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "decided_by": {
+          "type": "string",
+          "enum": [
+            "user",
+            "assistant",
+            "system"
+          ]
+        },
+        "conflict_type": {
+          "type": "string",
+          "enum": [
+            "opening_hours_conflict",
+            "overlap_conflict",
+            "travel_time_underestimated",
+            "locked_item_violation",
+            "meal_window_missing",
+            "pace_limit_exceeded",
+            "reservation_time_mismatch"
+          ]
+        },
+        "conflict_message": {
+          "type": "string"
+        },
+        "item_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "day_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "reason": {
           "type": "string"
         }
       }

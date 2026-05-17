@@ -127,6 +127,19 @@ export type ItineraryConflict = {
   resolution_hint?: string;
 };
 
+export type ConflictReviewDecision = {
+  id: string;
+  conflict_id: string;
+  decision: "accepted";
+  decided_at: string;
+  decided_by: "user" | "assistant" | "system";
+  conflict_type?: ConflictType;
+  conflict_message?: string;
+  item_ids?: string[];
+  day_date?: string;
+  reason?: string;
+};
+
 export type MarkdownSection = {
   day_date: string;
   content: string;
@@ -167,6 +180,7 @@ export type Itinerary = {
   places: ItineraryPlace[];
   routes: ItineraryRoute[];
   conflicts: ItineraryConflict[];
+  review_decisions?: ConflictReviewDecision[];
   markdown_sections?: MarkdownSection[];
   change_log: ChangeLogEntry[];
 };
@@ -177,6 +191,7 @@ export type PlannerCommandAction =
   | "move_item"
   | "reorder_item"
   | "update_item"
+  | "review_conflict"
   | "add_day"
   | "delete_day"
   | "replace_place"

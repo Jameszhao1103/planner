@@ -13,6 +13,7 @@ import {
 import type { PreviewRepository, TripRepository } from "./repositories.ts";
 import type {
   CommandExecutionContext,
+  ConflictReviewDecision,
   Itinerary,
   ItineraryDay,
   ItineraryItem,
@@ -407,6 +408,7 @@ const DIRECT_EXECUTE_ACTIONS = new Set<PlannerCommand["action"]>([
   "move_item",
   "reorder_item",
   "update_item",
+  "review_conflict",
   "delete_item",
   "restore_item",
   "add_day",
@@ -417,7 +419,7 @@ function assertDirectExecuteCommand(command: PlannerCommand): void {
   if (!DIRECT_EXECUTE_ACTIONS.has(command.action)) {
     throw new PlannerError(
       "invalid_command",
-      `Direct execute only supports lock_item, unlock_item, move_item, reorder_item, update_item, delete_item, restore_item, add_day, and delete_day. Received ${command.action}.`
+      `Direct execute only supports lock_item, unlock_item, move_item, reorder_item, update_item, review_conflict, delete_item, restore_item, add_day, and delete_day. Received ${command.action}.`
     );
   }
 }
@@ -434,9 +436,21 @@ function buildDirectUndoCommands(
   const seenLockItems = new Set<string>();
   const seenDeletedItems = new Set<string>();
   const seenUpdatedItems = new Set<string>();
+  const seenReviewedConflicts = new Set<string>();
   const seenDays = new Set<string>();
 
   [...commands].reverse().forEach((command) => {
+    if (command.action === "review_conflict") {
+      const conflictId = typeof command.payload?.conflict_id === "string" ? command.payload.conflict_id : null;
+      if (!conflictId || seenReviewedConflicts.has(conflictId)) {
+        return;
+      }
+
+      undoCommands.push(buildUndoReviewConflictCommand(before, conflictId));
+      seenReviewedConflicts.add(conflictId);
+      return;
+    }
+
     if (command.action === "add_day" && command.day_date && !seenDays.has(command.day_date)) {
       undoCommands.push({
         command_id: createId("cmd"),
@@ -621,6 +635,28 @@ function buildUndoUpdateItemCommand(
   };
 }
 
+function buildUndoReviewConflictCommand(before: Itinerary, conflictId: string): PlannerCommand {
+  const previousDecision = findReviewDecision(before, conflictId);
+  return {
+    command_id: createId("cmd"),
+    action: "review_conflict",
+    reason: previousDecision ? "Undo conflict review update" : "Undo conflict review",
+    payload: previousDecision
+      ? {
+          conflict_id: conflictId,
+          review_decision: structuredClone(previousDecision),
+        }
+      : {
+          conflict_id: conflictId,
+          decision: "clear",
+        },
+  };
+}
+
+function findReviewDecision(itinerary: Itinerary, conflictId: string): ConflictReviewDecision | null {
+  return itinerary.review_decisions?.find((decision) => decision.conflict_id === conflictId) ?? null;
+}
+
 function findItemDayDate(itinerary: Itinerary, itemId: string): string | undefined {
   return itinerary.days.find((day) => day.items.some((item) => item.id === itemId))?.date;
 }
@@ -680,6 +716,7 @@ function createTripSkeleton(input: {
     places: [],
     routes: [],
     conflicts: [],
+    review_decisions: [],
     markdown_sections: [],
     change_log: [
       {

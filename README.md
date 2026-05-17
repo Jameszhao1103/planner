@@ -24,9 +24,10 @@ The goal is simple: let AI help with travel planning without taking control away
 - new-trip intake that turns pasted plans into trip metadata, imported itinerary days/items, and a review checklist
 - imported plans can create full day/item itineraries instead of only an empty trip shell
 - unresolved-place review queue for stops that still need map matches
+- trip quality score summarizing unresolved places, open conflicts, review items, and kept conflicts
 - replace and insert places through search + diff previews
 - route and opening-hours validation
-- conflict grading, locate actions, repair previews, and session-level keep-as-is handling
+- conflict grading, locate actions, repair previews, and persisted keep-as-is review decisions
 - conflict repair previews for overlap, travel-time, meal-gap, and pacing issues
 - multi-step undo / redo for direct edits
 - `.ics` calendar export and print-friendly HTML export
@@ -69,7 +70,7 @@ Typical flow:
 4. The engine recomputes routes, gaps, and conflicts.
 5. The same itinerary version re-renders the `Map`, `Schedule`, `Selection`, and `Assistant`.
 
-Direct edits use structured planner commands too. Current direct-execute actions include lock/unlock, move, reorder, add/delete day, delete/restore item, and `update_item` for stop title, kind, category, notes, and status edits. Broader AI-assisted edits still go through preview first.
+Direct edits use structured planner commands too. Current direct-execute actions include lock/unlock, move, reorder, add/delete day, delete/restore item, `update_item` for stop title, kind, category, notes, and status edits, and `review_conflict` for persisted keep-as-is decisions. Broader AI-assisted edits still go through preview first.
 
 ## Architecture At A Glance
 
@@ -250,7 +251,7 @@ Known gaps:
 - no auth or multi-user model yet
 - file-backed persistence instead of a production database
 - heuristic planner behavior instead of a full optimization solver
-- conflict keep-as-is decisions are session-scoped rather than persisted as a review log
+- keep-as-is decisions now persist, but there is not yet a full review-history browser or audit trail UI
 - provider usage still needs stronger cost controls and observability
 - UI is functional and richer than the first MVP, but still not production-polished
 

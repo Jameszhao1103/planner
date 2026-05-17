@@ -22,6 +22,7 @@
         "move_item",
         "reorder_item",
         "update_item",
+        "review_conflict",
         "add_day",
         "delete_day",
         "replace_place",
