@@ -17,6 +17,8 @@ import type {
   Itinerary,
   ItineraryDay,
   ItineraryItem,
+  ItineraryItemKind,
+  ItineraryItemStatus,
   ItineraryRoute,
   PlaceSnapshot,
   PlannerCommand,
@@ -68,6 +70,9 @@ async function executeCommand(
       return;
     case "reorder_item":
       reorderItem(itinerary, command);
+      return;
+    case "update_item":
+      updateItem(itinerary, command);
       return;
     case "add_day":
       addDay(itinerary, command);
@@ -156,6 +161,62 @@ function restoreItem(itinerary: Itinerary, command: PlannerCommand): void {
 
   day.items.push(item);
   day.items.sort((left, right) => compareIso(left.start_at, right.start_at));
+}
+
+function updateItem(itinerary: Itinerary, command: PlannerCommand): void {
+  const payload = command.payload ?? {};
+  mutateItem(itinerary, command, (item) => {
+    let changed = false;
+
+    if (Object.hasOwn(payload, "title")) {
+      if (typeof payload.title !== "string") {
+        throw new PlannerError("invalid_command", "update_item payload.title must be a string.");
+      }
+
+      const title = payload.title.trim();
+      if (!title) {
+        throw new PlannerError("invalid_command", "Item title cannot be empty.");
+      }
+
+      item.title = title;
+      changed = true;
+    }
+
+    if (Object.hasOwn(payload, "kind")) {
+      if (!isItineraryItemKind(payload.kind)) {
+        throw new PlannerError("invalid_command", "update_item payload.kind is not a supported item kind.");
+      }
+
+      item.kind = payload.kind;
+      changed = true;
+    }
+
+    if (Object.hasOwn(payload, "category")) {
+      item.category = coerceOptionalText(payload.category, "category");
+      changed = true;
+    }
+
+    if (Object.hasOwn(payload, "notes")) {
+      item.notes = coerceOptionalText(payload.notes, "notes");
+      changed = true;
+    }
+
+    if (Object.hasOwn(payload, "status")) {
+      if (!isItineraryItemStatus(payload.status)) {
+        throw new PlannerError("invalid_command", "update_item payload.status is not a supported item status.");
+      }
+
+      item.status = payload.status;
+      changed = true;
+    }
+
+    if (!changed) {
+      throw new PlannerError(
+        "invalid_command",
+        "update_item requires at least one of payload.title, payload.kind, payload.category, payload.notes, or payload.status."
+      );
+    }
+  });
 }
 
 function addDay(itinerary: Itinerary, command: PlannerCommand): void {
@@ -710,6 +771,44 @@ function matchesRoute(route: ItineraryRoute, command: PlannerCommand): boolean {
   }
 
   return false;
+}
+
+const ITINERARY_ITEM_KINDS = new Set<ItineraryItemKind>([
+  "flight",
+  "transit",
+  "check_in",
+  "check_out",
+  "lodging",
+  "activity",
+  "meal",
+  "buffer",
+  "free_time",
+]);
+
+const ITINERARY_ITEM_STATUSES = new Set<ItineraryItemStatus>([
+  "confirmed",
+  "suggested",
+  "draft",
+]);
+
+function isItineraryItemKind(value: unknown): value is ItineraryItemKind {
+  return typeof value === "string" && ITINERARY_ITEM_KINDS.has(value as ItineraryItemKind);
+}
+
+function isItineraryItemStatus(value: unknown): value is ItineraryItemStatus {
+  return typeof value === "string" && ITINERARY_ITEM_STATUSES.has(value as ItineraryItemStatus);
+}
+
+function coerceOptionalText(value: unknown, fieldName: string): string | undefined {
+  if (value == null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new PlannerError("invalid_command", `update_item payload.${fieldName} must be a string or null.`);
+  }
+
+  return value.trim() || undefined;
 }
 
 function assertItemEditable(item: ItineraryItem, command: PlannerCommand): void {

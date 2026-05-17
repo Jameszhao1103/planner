@@ -19,12 +19,14 @@ The goal is simple: let AI help with travel planning without taking control away
 
 - interactive day-by-day itinerary workspace
 - synchronized `Map`, `Timeline`, `Plan`, and `Selection` views
-- direct edits for lock, unlock, move, reorder, and timeline drag
-- preview / apply / reject flow for assistant-generated changes
-- new-trip intake that turns pasted plans into trip metadata and flags missing fields
+- direct edits for lock, unlock, move, reorder, timeline drag, time, and stop details
+- preview / apply / reject flow for assistant-generated changes, with an explanation layer before applying
+- new-trip intake that turns pasted plans into trip metadata, imported itinerary days/items, and a review checklist
 - imported plans can create full day/item itineraries instead of only an empty trip shell
+- unresolved-place review queue for stops that still need map matches
 - replace and insert places through search + diff previews
 - route and opening-hours validation
+- conflict grading, locate actions, repair previews, and session-level keep-as-is handling
 - conflict repair previews for overlap, travel-time, meal-gap, and pacing issues
 - multi-step undo / redo for direct edits
 - `.ics` calendar export and print-friendly HTML export
@@ -66,6 +68,8 @@ Typical flow:
 3. The planner resolves the command into structured mutations.
 4. The engine recomputes routes, gaps, and conflicts.
 5. The same itinerary version re-renders the `Map`, `Schedule`, `Selection`, and `Assistant`.
+
+Direct edits use structured planner commands too. Current direct-execute actions include lock/unlock, move, reorder, add/delete day, delete/restore item, and `update_item` for stop title, kind, category, notes, and status edits. Broader AI-assisted edits still go through preview first.
 
 ## Architecture At A Glance
 
@@ -127,7 +131,7 @@ http://localhost:3000
 
 ```bash
 npm test
-node --check public/app.js
+npm run check:js
 ```
 
 ## Runtime Modes
@@ -182,6 +186,8 @@ The important detail is that assistant requests are translated into structured p
 
 Main local routes:
 
+- `GET /api/trips`
+- `POST /api/trips`
 - `GET /api/trips/:tripId`
 - `POST /api/trips/intake/parse`
 - `GET /api/places/search`
@@ -200,7 +206,12 @@ Optional debug routes:
 
 ## Repository Guide
 
-- `public/index.html`, `public/app.js`, `public/app.css`: workspace UI
+- `public/index.html`: workspace shell
+- `public/app/main.js`: frontend state, rendering, and interaction orchestration
+- `public/app/import-review.js`: imported itinerary review checklist
+- `public/app/place-resolution.js`: unresolved-place queue rendering and collection helpers
+- `public/app/timeline.js`, `public/app/map.js`, `public/app/shared.js`: schedule, map, and shared UI helpers
+- `public/app.css`: workspace styling
 - `server/app/create-server.mjs`: server bootstrap
 - `server/app/app-router.mjs`: route wiring
 - `server/app/create-runtime.mjs`: runtime composition
@@ -239,8 +250,9 @@ Known gaps:
 - no auth or multi-user model yet
 - file-backed persistence instead of a production database
 - heuristic planner behavior instead of a full optimization solver
+- conflict keep-as-is decisions are session-scoped rather than persisted as a review log
 - provider usage still needs stronger cost controls and observability
-- UI is functional but not yet production-polished
+- UI is functional and richer than the first MVP, but still not production-polished
 
 ## License
 

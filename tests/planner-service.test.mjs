@@ -211,6 +211,108 @@ test("direct execute can move an item and provide undo", async () => {
   });
 });
 
+test("direct execute can update item details and provide undo", async () => {
+  await withMockRuntime(async (runtime) => {
+    const trip = await runtime.tripRepository.getTripById(runtime.sampleTripId);
+    assert.ok(trip);
+    const originalLunch = trip.days[0].items.find((item) => item.id === "item_lunch");
+    assert.ok(originalLunch);
+
+    const executed = await runtime.plannerService.executeCommandsDirect({
+      tripId: runtime.sampleTripId,
+      baseVersion: trip.version,
+      input: {
+        commands: [
+          {
+            command_id: "cmd_update_direct",
+            action: "update_item",
+            item_id: "item_lunch",
+            day_date: "2026-04-12",
+            reason: "Update lunch details",
+            payload: {
+              title: "Picnic at the market",
+              kind: "activity",
+              category: "market",
+              notes: "Keep this flexible if the morning runs long.",
+              status: "draft",
+            },
+          },
+        ],
+      },
+    });
+
+    const lunch = executed.trip.days[0].items.find((item) => item.id === "item_lunch");
+    assert.equal(lunch?.title, "Picnic at the market");
+    assert.equal(lunch?.kind, "activity");
+    assert.equal(lunch?.category, "market");
+    assert.equal(lunch?.notes, "Keep this flexible if the morning runs long.");
+    assert.equal(lunch?.status, "draft");
+    assert.equal(executed.undo_commands.length, 1);
+    assert.equal(executed.undo_commands[0].action, "update_item");
+
+    const undone = await runtime.plannerService.executeCommandsDirect({
+      tripId: runtime.sampleTripId,
+      baseVersion: executed.trip.version,
+      input: {
+        commands: executed.undo_commands,
+      },
+    });
+
+    const restoredLunch = undone.trip.days[0].items.find((item) => item.id === "item_lunch");
+    assert.equal(restoredLunch?.title, originalLunch.title);
+    assert.equal(restoredLunch?.kind, originalLunch.kind);
+    assert.equal(restoredLunch?.category, originalLunch.category);
+    assert.equal(restoredLunch?.notes, originalLunch.notes);
+    assert.equal(restoredLunch?.status, originalLunch.status);
+  });
+});
+
+test("direct execute rejects update_item on locked stops", async () => {
+  await withMockRuntime(async (runtime) => {
+    const trip = await runtime.tripRepository.getTripById(runtime.sampleTripId);
+    assert.ok(trip);
+
+    const locked = await runtime.plannerService.executeCommandsDirect({
+      tripId: runtime.sampleTripId,
+      baseVersion: trip.version,
+      input: {
+        commands: [
+          {
+            command_id: "cmd_lock_before_update",
+            action: "lock_item",
+            item_id: "item_lunch",
+            day_date: "2026-04-12",
+            reason: "Lock lunch",
+          },
+        ],
+      },
+    });
+
+    await assert.rejects(
+      () =>
+        runtime.plannerService.executeCommandsDirect({
+          tripId: runtime.sampleTripId,
+          baseVersion: locked.trip.version,
+          input: {
+            commands: [
+              {
+                command_id: "cmd_update_locked",
+                action: "update_item",
+                item_id: "item_lunch",
+                day_date: "2026-04-12",
+                reason: "Update locked lunch",
+                payload: {
+                  title: "Locked lunch edit",
+                },
+              },
+            ],
+          },
+        }),
+      /locked and cannot be changed/
+    );
+  });
+});
+
 test("direct execute can reorder an item and undo by restoring moved times", async () => {
   await withMockRuntime(async (runtime) => {
     const trip = await runtime.tripRepository.getTripById(runtime.sampleTripId);

@@ -1,5 +1,7 @@
 import { requestJson, triggerDownload } from "./api.js";
+import { buildPostImportReviewMessage, renderTripImportReviewChecklist } from "./import-review.js";
 import { createMapController } from "./map.js";
+import { renderPlaceResolutionQueue } from "./place-resolution.js";
 import { defaultStartTimeForInsertSession, escapeHtml, eventClass, itemTypeLabel, localTime, minutesRelativeToDay, replaceIsoTime, resolveTripTimeZone, shiftIsoByMinutes } from "./shared.js";
 import { attachTimelineInteractions, buildPlanFlow, buildTimelineHourMarks, buildTimelineLayout, buildTimelineModel, computeTimelineWindow, exactDurationMinutes, flowBlockClass, percentFromTimelineMinute, timelineBlockTitle } from "./timeline.js";
 
@@ -12,6 +14,7 @@ const state = {
   selectedDay: null,
   selectedItemId: null,
   highlightedConflictId: null,
+  ignoredConflictIds: new Set(),
   scheduleTab: "timeline",
   workspaceTab: "selection",
   pending: false,
@@ -44,6 +47,29 @@ const SHORT_DATE_WITH_YEAR_FORMATTER = new Intl.DateTimeFormat(UI_LOCALE, {
 });
 const NUMBER_FORMATTER = new Intl.NumberFormat(UI_LOCALE);
 const TIME_ZONE_PARTS_FORMATTER_CACHE = new Map();
+const EDITABLE_ITEM_KINDS = [
+  ["activity", "Activity"],
+  ["meal", "Meal"],
+  ["flight", "Flight"],
+  ["transit", "Transit"],
+  ["check_in", "Check-in"],
+  ["check_out", "Check-out"],
+  ["lodging", "Lodging"],
+  ["buffer", "Buffer"],
+  ["free_time", "Free time"],
+];
+const EDITABLE_ITEM_STATUSES = [
+  ["confirmed", "Confirmed"],
+  ["suggested", "Suggested"],
+  ["draft", "Draft"],
+];
+const EDITABLE_TRANSPORT_MODES = [
+  ["walk", "Walk"],
+  ["drive", "Drive"],
+  ["taxi", "Taxi"],
+  ["transit", "Transit"],
+  ["flight", "Flight"],
+];
 const elements = {
   tripTitle: document.querySelector("#tripTitle"),
   tripTitleKicker: document.querySelector("#tripTitleKicker"),
@@ -180,6 +206,7 @@ elements.tripTitleForm.addEventListener("submit", async (event) => {
     syncTripListEntry(payload.trip);
     state.preview = null;
     state.previewMeta = null;
+    reconcileIgnoredConflicts(payload.trip);
     state.titleEditing = false;
     render();
     setPending(false, payload.summary ?? "Trip renamed.");
@@ -196,13 +223,31 @@ elements.tripCreateForm.addEventListener("submit", async (event) => {
   const endDate = String(formData.get("end_date") ?? "").trim();
   const timezone = String(formData.get("timezone") ?? "").trim();
   const travelerCount = Number.parseInt(String(formData.get("traveler_count") ?? "2"), 10);
+  const resolution = resolveTripCreateState();
 
   if (!title || !startDate || !endDate || !timezone) {
     return;
   }
 
+  if (resolution.importReviewRequired && !resolution.importReviewConfirmed) {
+    state.tripIntake = {
+      ...state.tripIntake,
+      statusMessage: "Review and confirm the imported itinerary before creating this trip.",
+      statusTone: "error",
+    };
+    renderTripCreateAssist();
+    return;
+  }
+
   setPending(true, "Creating trip…");
   try {
+    const importDraft =
+      state.tripIntake.parsed &&
+      !state.tripIntake.sourceDirty &&
+      elements.tripImportInput.value.trim() &&
+      (state.tripIntake.itinerary?.days?.length ?? 0) > 0
+        ? state.tripIntake.itinerary
+        : null;
     const payload = await requestJson("/api/trips", {
       method: "POST",
       body: {
@@ -211,13 +256,7 @@ elements.tripCreateForm.addEventListener("submit", async (event) => {
         end_date: endDate,
         timezone,
         traveler_count: travelerCount,
-        import_draft:
-          state.tripIntake.parsed &&
-          !state.tripIntake.sourceDirty &&
-          elements.tripImportInput.value.trim() &&
-          (state.tripIntake.itinerary?.days?.length ?? 0) > 0
-            ? state.tripIntake.itinerary
-            : null,
+        import_draft: importDraft,
       },
     });
 
@@ -230,7 +269,7 @@ elements.tripCreateForm.addEventListener("submit", async (event) => {
     elements.tripCreateTravelers.value = String(travelerCount);
     await loadTrips();
     await loadTrip(state.tripId);
-    setPending(false, payload.summary ?? "Trip created.");
+    setPending(false, buildPostImportReviewMessage(state.trip, importDraft) ?? payload.summary ?? "Trip created.");
   } catch (error) {
     setPending(false, error.message, "error");
   }
@@ -252,19 +291,34 @@ elements.tripCreateForm.addEventListener("input", (event) => {
   }
 
   if (event.target === elements.tripCreateStartDate) {
+    clearTripIntakeReviewConfirmation();
+    clearTripIntakeStatusMessage();
     maybeAutoFillTripEndDate();
   }
 
   if (event.target === elements.tripCreateEndDate) {
+    clearTripIntakeReviewConfirmation();
+    clearTripIntakeStatusMessage();
     if (elements.tripCreateEndDate.value !== state.tripIntake.autoDerivedEndDate) {
       state.tripIntake.autoDerivedEndDate = null;
     }
+  }
+
+  if (
+    event.target === elements.tripCreateTitle ||
+    event.target === elements.tripCreateTimezone ||
+    event.target === elements.tripCreateTravelers
+  ) {
+    clearTripIntakeReviewConfirmation();
+    clearTripIntakeStatusMessage();
   }
 
   renderTripCreateAssist();
 });
 
 elements.tripCreateTimezone.addEventListener("change", () => {
+  clearTripIntakeReviewConfirmation();
+  clearTripIntakeStatusMessage();
   renderTripCreateAssist();
 });
 
@@ -315,6 +369,7 @@ elements.applyButton.addEventListener("click", async () => {
     syncTripListEntry(payload.trip);
     state.preview = null;
     state.previewMeta = null;
+    reconcileIgnoredConflicts(payload.trip);
     state.selectedDay = state.selectedDay ?? state.trip.days[0]?.date ?? null;
     clearPlaceSearchSession();
     clearHistory();
@@ -514,6 +569,37 @@ elements.assistantDiff.addEventListener("click", async (event) => {
     return;
   }
 
+  const clearIgnoredTarget = event.target.closest("[data-conflict-action='clear-ignored']");
+  if (clearIgnoredTarget) {
+    state.ignoredConflictIds.clear();
+    clearConflictHighlight();
+    render();
+    state.statusMessage = "Kept conflicts are visible again.";
+    state.statusTone = "neutral";
+    renderWorkspaceNotice();
+    elements.assistantStatus.textContent = state.statusMessage;
+    return;
+  }
+
+  const ignoreTarget = event.target.closest("[data-conflict-action='ignore']");
+  if (ignoreTarget) {
+    const conflictId = ignoreTarget.dataset.conflictId;
+    if (!conflictId) {
+      return;
+    }
+
+    state.ignoredConflictIds.add(conflictId);
+    if (state.highlightedConflictId === conflictId) {
+      clearConflictHighlight();
+    }
+    render();
+    state.statusMessage = "Conflict kept as-is for this session.";
+    state.statusTone = "neutral";
+    renderWorkspaceNotice();
+    elements.assistantStatus.textContent = state.statusMessage;
+    return;
+  }
+
   const repairTarget = event.target.closest("[data-conflict-action='repair']");
   if (!repairTarget) {
     return;
@@ -550,6 +636,30 @@ elements.focusEditor.addEventListener("click", async (event) => {
   const selectedDay = activeTrip?.days.find((candidate) => candidate.date === state.selectedDay) ?? null;
   const selectedItem = getSelectedItem(activeTrip, state.selectedDay, state.selectedItemId);
   const action = actionTarget.dataset.editorAction;
+
+  if (action === "resolve-place") {
+    const targetDayDate = actionTarget.dataset.dayDate;
+    const targetItemId = actionTarget.dataset.itemId;
+    const targetDay = activeTrip?.days.find((candidate) => candidate.date === targetDayDate) ?? null;
+    const targetItem = targetDay?.items.find((candidate) => candidate.id === targetItemId) ?? null;
+    if (!targetDay || !targetItem) {
+      return;
+    }
+
+    state.selectedDay = targetDay.date;
+    state.selectedItemId = targetItem.id;
+    state.workspaceTab = "selection";
+    clearConflictHighlight();
+    await searchPlaces({
+      mode: "replace",
+      itemId: targetItem.id,
+      dayDate: targetDay.date,
+      query: targetItem.title,
+      kind: inferInsertKindFromItem(targetItem),
+      mealType: targetItem.kind === "meal" ? normalizeMealType(targetItem.category) : null,
+    }, targetItem, targetDay);
+    return;
+  }
 
   if (!selectedItem) {
     if (!selectedDay) {
@@ -809,6 +919,55 @@ elements.focusEditor.addEventListener("submit", async (event) => {
     return;
   }
 
+  if (formMode === "item-details") {
+    const formData = new FormData(form);
+    const title = String(formData.get("title") ?? "").trim();
+    const kind = String(formData.get("kind") ?? selectedItem.kind);
+    const status = String(formData.get("status") ?? selectedItem.status);
+    const category = String(formData.get("category") ?? "").trim();
+    const notes = String(formData.get("notes") ?? "").trim();
+    if (!title) {
+      setPending(false, "Stop title cannot be empty.", "error");
+      return;
+    }
+
+    const payload = {
+      title,
+      kind,
+      status,
+      category: category || null,
+      notes: notes || null,
+    };
+    const unchanged =
+      title === selectedItem.title &&
+      kind === selectedItem.kind &&
+      status === selectedItem.status &&
+      category === (selectedItem.category ?? "") &&
+      notes === (selectedItem.notes ?? "");
+    if (unchanged) {
+      setPending(false, "No stop detail changes to save.");
+      return;
+    }
+
+    await executeImmediately({
+      commands: [
+        {
+          command_id: `cmd_update_${Date.now()}`,
+          action: "update_item",
+          item_id: selectedItem.id,
+          day_date: state.selectedDay,
+          reason: `Update details for ${selectedItem.title}`,
+          payload,
+        },
+      ],
+    }, {
+      pendingMessage: `Saving ${selectedItem.title}…`,
+      successMessage: "Stop details saved.",
+      workspaceTab: "selection",
+    });
+    return;
+  }
+
   if (formMode === "time") {
     const formData = new FormData(form);
     const startTime = String(formData.get("start_time") ?? "").trim();
@@ -833,6 +992,35 @@ elements.focusEditor.addEventListener("submit", async (event) => {
       pendingMessage: `Updating ${selectedItem.title}…`,
       successMessage: `${selectedItem.title} updated.`,
       workspaceTab: "selection",
+    });
+    return;
+  }
+
+  if (formMode === "transport-mode") {
+    const formData = new FormData(form);
+    const mode = String(formData.get("mode") ?? "").trim();
+    const incomingRoute = findIncomingRoute(activeTrip, selectedItem.id);
+    if (!incomingRoute || !mode) {
+      return;
+    }
+
+    if (incomingRoute.mode === mode) {
+      setPending(false, "Transport mode unchanged.");
+      return;
+    }
+
+    await previewWithInput({
+      commands: [
+        {
+          command_id: `cmd_transport_${Date.now()}`,
+          action: "set_transport_mode",
+          item_id: incomingRoute.from_item_id,
+          target_item_id: incomingRoute.to_item_id,
+          day_date: state.selectedDay,
+          mode,
+          reason: `Change route to ${selectedItem.title} to ${mode}`,
+        },
+      ],
     });
     return;
   }
@@ -887,6 +1075,23 @@ elements.tripImportItinerary?.addEventListener("input", (event) => {
   }
 
   updateTripIntakeEditableField(field);
+});
+
+elements.tripImportSummary?.addEventListener("click", (event) => {
+  const actionTarget = event.target.closest("[data-trip-review-action]");
+  if (!actionTarget) {
+    return;
+  }
+
+  if (actionTarget.dataset.tripReviewAction === "confirm") {
+    state.tripIntake = {
+      ...state.tripIntake,
+      reviewConfirmed: true,
+      statusMessage: "Import review confirmed. Ready to create.",
+      statusTone: "success",
+    };
+    renderTripCreateAssist();
+  }
 });
 
 elements.tripImportItinerary?.addEventListener("click", (event) => {
@@ -975,6 +1180,7 @@ async function loadTrip(nextTripId = state.tripId) {
     state.trip = null;
     state.preview = null;
     state.previewMeta = null;
+    state.ignoredConflictIds.clear();
     clearConflictHighlight();
     state.debugEnabled = false;
     render();
@@ -989,6 +1195,10 @@ async function loadTrip(nextTripId = state.tripId) {
   syncTripListEntry(payload.trip);
   state.preview = null;
   state.previewMeta = null;
+  if (!isSameTrip) {
+    state.ignoredConflictIds.clear();
+  }
+  reconcileIgnoredConflicts(payload.trip);
   clearHistory();
   clearConflictHighlight();
   state.provider = payload.workspace.provider ?? "mock";
@@ -1476,6 +1686,10 @@ function getDayTimingConflicts(trip, day) {
 
   const itemIds = new Set((day.items ?? []).map((item) => item.id));
   return (trip.conflicts ?? []).filter((conflict) => {
+    if (isConflictIgnored(conflict.id)) {
+      return false;
+    }
+
     if (!["travel_time_underestimated", "overlap_conflict"].includes(conflict.type)) {
       return false;
     }
@@ -1490,7 +1704,10 @@ function getDayTimingConflicts(trip, day) {
 }
 
 function renderAssistant(trip, day, selectedItem, highlightedConflict) {
-  elements.focusEditor.innerHTML = renderFocusedEditor(trip, day, selectedItem);
+  elements.focusEditor.innerHTML = `
+    ${renderPlaceResolutionQueue(trip, selectedItem?.id ?? null)}
+    ${renderFocusedEditor(trip, day, selectedItem)}
+  `;
   elements.resetButton.classList.toggle("hidden", !state.debugEnabled);
   if (!state.previewMeta) {
     elements.assistantDiff.innerHTML = `
@@ -1511,7 +1728,8 @@ function renderAssistant(trip, day, selectedItem, highlightedConflict) {
   const routeChanges = collectPreviewRouteChanges(state.trip, previewTrip, state.previewMeta.diff.patch.changed_route_ids ?? []);
   const resolvedConflicts = collectConflictSnapshots(state.trip, state.previewMeta.resolved_conflicts);
   const introducedConflicts = collectConflictSnapshots(previewTrip, state.previewMeta.introduced_conflicts);
-  const commands = state.previewMeta.commands
+  const previewCommands = state.previewMeta.commands;
+  const commands = previewCommands
     .map((command) => `<li><code>${escapeHtml(command.action)}</code> - ${escapeHtml(command.reason)}</li>`)
     .join("");
 
@@ -1523,8 +1741,15 @@ function renderAssistant(trip, day, selectedItem, highlightedConflict) {
       Resolved conflicts: ${state.previewMeta.resolved_conflicts.length} ·
       Introduced conflicts: ${state.previewMeta.introduced_conflicts.length}
     </div>
+    ${renderPreviewExplanation({
+      itemChanges,
+      routeChanges,
+      resolvedConflicts,
+      introducedConflicts,
+      commands: previewCommands,
+    })}
     ${renderPreviewChangeList(itemChanges, routeChanges)}
-    ${resolvedConflicts.length ? renderConflictSnapshotList("Resolved in this preview", resolvedConflicts, { allowFocus: false, allowRepair: false }) : ""}
+    ${resolvedConflicts.length ? renderConflictSnapshotList("Resolved in this preview", resolvedConflicts, { allowFocus: false, allowRepair: false, allowIgnore: false }) : ""}
     ${introducedConflicts.length ? renderConflictSnapshotList("Conflicts after this preview", introducedConflicts, { highlightedConflictId: highlightedConflict?.id ?? null }) : ""}
     ${commands ? `<div class="diff-section"><div class="diff-section-title">Planned actions</div><ul class="diff-list">${commands}</ul></div>` : ""}
     ${renderConflicts(previewTrip, day, {
@@ -1558,6 +1783,7 @@ function renderFocusedEditor(trip, day, selectedItem) {
   const replaceSession = searchSession?.mode === "replace" ? searchSession : null;
   const insertSession = searchSession?.mode === "insert" ? searchSession : null;
   const replaceResults = replaceSession ? renderSearchResults(replaceSession.results, "replace-place") : "";
+  const incomingRoute = findIncomingRoute(trip, selectedItem.id);
 
   return `
     <section class="focus-card ${eventClass(selectedItem)}">
@@ -1582,6 +1808,34 @@ function renderFocusedEditor(trip, day, selectedItem) {
         <span class="focus-hint">Small edits apply immediately. Drag on the timeline to shift time.</span>
       </div>
 
+      <form class="editor-form editor-form-details" data-editor-form="item-details">
+        <label class="editor-form-wide">
+          <span>Title</span>
+          <input type="text" name="title" value="${escapeHtml(selectedItem.title)}" ${disabledAttr}>
+        </label>
+        <label>
+          <span>Type</span>
+          <select name="kind" ${disabledAttr}>
+            ${EDITABLE_ITEM_KINDS.map(([value, label]) => `<option value="${value}"${selectedItem.kind === value ? " selected" : ""}>${label}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          <span>Status</span>
+          <select name="status" ${disabledAttr}>
+            ${EDITABLE_ITEM_STATUSES.map(([value, label]) => `<option value="${value}"${selectedItem.status === value ? " selected" : ""}>${label}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          <span>Category</span>
+          <input type="text" name="category" value="${escapeHtml(selectedItem.category ?? "")}" placeholder="museum, lunch, lodging…" ${disabledAttr}>
+        </label>
+        <label class="editor-form-wide">
+          <span>Notes</span>
+          <textarea name="notes" rows="3" ${disabledAttr}>${escapeHtml(selectedItem.notes ?? "")}</textarea>
+        </label>
+        <button type="submit" class="button button-primary" ${disabledAttr}>Save details</button>
+      </form>
+
       <form class="editor-form" data-editor-form="time">
         <label>
           <span>Start</span>
@@ -1593,6 +1847,18 @@ function renderFocusedEditor(trip, day, selectedItem) {
         </label>
         <button type="submit" class="button button-primary" ${disabledAttr}>Save time</button>
       </form>
+
+      ${incomingRoute ? `
+        <form class="editor-form editor-form-transport" data-editor-form="transport-mode">
+          <label>
+            <span>Transport here</span>
+            <select name="mode" ${disabledAttr}>
+              ${EDITABLE_TRANSPORT_MODES.map(([value, label]) => `<option value="${value}"${incomingRoute.mode === value ? " selected" : ""}>${label}</option>`).join("")}
+            </select>
+          </label>
+          <button type="submit" class="button" ${disabledAttr}>Preview route</button>
+        </form>
+      ` : ""}
 
       <div class="focus-section">
         <h4>Insert Stop</h4>
@@ -1946,6 +2212,7 @@ async function replayHistory(mode) {
     state.trip = payload.trip;
     state.preview = null;
     state.previewMeta = null;
+    reconcileIgnoredConflicts(payload.trip);
     clearPlaceSearchSession();
 
     const inverseEntry = payload.undo_commands?.length
@@ -2024,6 +2291,7 @@ function createEmptyTripIntakeState() {
     statusTone: "neutral",
     autoDerivedEndDate: null,
     hasExactEndDate: false,
+    reviewConfirmed: false,
   };
 }
 
@@ -2041,6 +2309,7 @@ function markTripImportSourceDirty() {
   state.tripIntake = {
     ...state.tripIntake,
     sourceDirty,
+    reviewConfirmed: false,
     statusMessage: sourceDirty
       ? "The pasted plan changed. Extract again to refresh the imported itinerary."
       : "",
@@ -2102,6 +2371,7 @@ async function parseTripIntake(options = {}) {
       statusTone: "neutral",
       autoDerivedEndDate: null,
       hasExactEndDate: Boolean(payload.draft?.end_date),
+      reviewConfirmed: false,
     };
 
     elements.tripCreateTitle.value = payload.draft?.title ?? "";
@@ -2119,9 +2389,12 @@ async function parseTripIntake(options = {}) {
 
     maybeAutoFillTripEndDate();
     const resolution = resolveTripCreateState();
-    state.tripIntake.statusMessage = resolution.canCreate && !state.tripIntake.sourceDirty
-      ? "Trip details extracted. Ready to create."
-      : "Trip details extracted. Fill the highlighted fields to finish.";
+    state.tripIntake.statusMessage =
+      resolution.canCreate && !state.tripIntake.sourceDirty
+        ? "Trip details extracted. Ready to create."
+        : (resolution.importReviewRequired && !resolution.importReviewConfirmed
+          ? "Trip details extracted. Review the checklist before creating."
+          : "Trip details extracted. Fill the highlighted fields to finish.");
     state.tripIntake.statusTone = resolution.canCreate ? "success" : "neutral";
     if (elements.tripImportFollowUpInput) {
       elements.tripImportFollowUpInput.value = "";
@@ -2191,6 +2464,31 @@ function recountTripIntakeItinerary(itinerary) {
   };
 }
 
+function clearTripIntakeReviewConfirmation() {
+  if (!state.tripIntake.reviewConfirmed) {
+    return;
+  }
+
+  state.tripIntake = {
+    ...state.tripIntake,
+    reviewConfirmed: false,
+    statusMessage: "",
+    statusTone: "neutral",
+  };
+}
+
+function clearTripIntakeStatusMessage() {
+  if (!state.tripIntake.parsed || state.tripIntake.sourceDirty || !state.tripIntake.statusMessage) {
+    return;
+  }
+
+  state.tripIntake = {
+    ...state.tripIntake,
+    statusMessage: "",
+    statusTone: "neutral",
+  };
+}
+
 function maybeAutoFillTripEndDate() {
   if (!state.tripIntake.parsed || state.tripIntake.hasExactEndDate || !state.tripIntake.durationDays) {
     return;
@@ -2214,17 +2512,22 @@ function renderTripCreateAssist() {
     return;
   }
 
+  const resolution = resolveTripCreateState();
   if (elements.tripCreateSubmitButton) {
-    elements.tripCreateSubmitButton.disabled = state.pending || state.tripIntake.sourceDirty;
+    elements.tripCreateSubmitButton.disabled =
+      state.pending ||
+      state.tripIntake.sourceDirty ||
+      (resolution.importReviewRequired && !resolution.importReviewConfirmed);
   }
 
-  const resolution = resolveTripCreateState();
   const parsed = state.tripIntake.parsed;
   const statusMessage = state.tripIntake.statusMessage
     || (parsed
       ? (resolution.canCreate
         ? "Trip details extracted. Ready to create."
-        : "Trip details extracted. Fill the highlighted fields to finish.")
+        : (resolution.importReviewRequired && !resolution.importReviewConfirmed
+          ? "Trip details extracted. Review the checklist before creating."
+          : "Trip details extracted. Fill the highlighted fields to finish."))
       : "");
   const statusTone = state.tripIntake.statusMessage
     ? state.tripIntake.statusTone
@@ -2260,12 +2563,6 @@ function renderTripCreateAssist() {
     summaryParts.push("<div>The pasted plan changed after extraction. Run extraction again before importing the itinerary.</div>");
   }
 
-  if ((state.tripIntake.itinerary?.day_count ?? 0) > 0) {
-    summaryParts.push(
-      `<div>The imported itinerary will create ${escapeHtml(String(state.tripIntake.itinerary.day_count))} day(s) and ${escapeHtml(String(state.tripIntake.itinerary.item_count ?? 0))} item(s).</div>`
-    );
-  }
-
   if (resolution.endDateWillAutoFillMessage) {
     summaryParts.push(`<div>${escapeHtml(resolution.endDateWillAutoFillMessage)}</div>`);
   }
@@ -2284,11 +2581,30 @@ function renderTripCreateAssist() {
     summaryParts.push(`<div>${escapeHtml(state.tripIntake.warnings.join(" "))}</div>`);
   }
 
+  if (resolution.importDraftReady) {
+    summaryParts.push(renderTripImportReviewChecklist(buildTripImportReviewContext(resolution)));
+  }
+
   elements.tripImportSummary.innerHTML = summaryParts.join("");
   elements.tripImportSummary.classList.toggle("hidden", summaryParts.length === 0);
   renderTripImportFollowUp(Boolean(resolution.blockingMissingFields.length || (!resolution.canCreate && state.tripIntake.followUpPrompt)));
   renderTripImportItineraryEditor();
   updateTripCreateFieldHints(resolution);
+}
+
+function buildTripImportReviewContext(resolution) {
+  return {
+    tripIntake: state.tripIntake,
+    resolution,
+    pending: state.pending,
+    form: {
+      title: elements.tripCreateTitle.value.trim(),
+      startDate: elements.tripCreateStartDate.value.trim(),
+      endDate: elements.tripCreateEndDate.value.trim(),
+      timezone: elements.tripCreateTimezone.value.trim(),
+      travelers: elements.tripCreateTravelers.value.trim(),
+    },
+  };
 }
 
 function renderTripImportFollowUp(visible) {
@@ -2522,6 +2838,9 @@ function mutateTripIntakeItinerary(mutator, options = {}) {
   state.tripIntake = {
     ...state.tripIntake,
     itinerary: recountTripIntakeItinerary(nextItinerary),
+    reviewConfirmed: false,
+    statusMessage: "",
+    statusTone: "neutral",
   };
 
   if (options.rerender) {
@@ -2560,12 +2879,16 @@ function resolveTripCreateState() {
     state.tripIntake.parsed &&
     !state.tripIntake.sourceDirty &&
     (state.tripIntake.itinerary?.days?.length ?? 0) > 0;
+  const importReviewRequired = Boolean(importDraftReady);
+  const importReviewConfirmed = Boolean(state.tripIntake.reviewConfirmed);
 
   return {
     blockingMissingFields,
     optionalMissingFields,
-    canCreate: blockingMissingFields.length === 0,
+    canCreate: blockingMissingFields.length === 0 && (!importReviewRequired || importReviewConfirmed),
     importDraftReady,
+    importReviewRequired,
+    importReviewConfirmed,
     endDateWillAutoFillMessage,
   };
 }
@@ -2698,6 +3021,134 @@ function collectPreviewRouteChanges(beforeTrip, afterTrip, changedRouteIds = [])
       };
     })
     .filter(Boolean);
+}
+
+function renderPreviewExplanation({ itemChanges, routeChanges, resolvedConflicts, introducedConflicts, commands }) {
+  const lockedChanges = itemChanges.filter((change) => change.before?.item?.locked || change.after?.item?.locked);
+  const introductionGrades = introducedConflicts.map((conflict) => classifyConflict(conflict));
+  const mustFixCount = introductionGrades.filter((grade) => grade.level === "must-fix").length;
+  const actionLines = buildPreviewActionLines(commands, itemChanges, routeChanges).slice(0, 4);
+  const safetyCards = [
+    {
+      label: "Conflict impact",
+      value: `${formatCountLabel(resolvedConflicts.length, "conflict resolved", "conflicts resolved")} · ${formatCountLabel(introducedConflicts.length, "conflict remaining", "conflicts remaining")}`,
+      tone: mustFixCount ? "alert" : "ok",
+      detail: mustFixCount
+        ? `${formatCountLabel(mustFixCount, "must-fix issue")} still needs review.`
+        : "No must-fix issues are introduced.",
+    },
+    {
+      label: "Locked stops",
+      value: lockedChanges.length
+        ? formatCountLabel(lockedChanges.length, "locked stop touched", "locked stops touched")
+        : "Not touched",
+      tone: lockedChanges.length ? "alert" : "ok",
+      detail: lockedChanges.length
+        ? "Review locked-stop changes before applying."
+        : "Locked stops remain protected.",
+    },
+    {
+      label: "Schedule scope",
+      value: `${formatCountLabel(itemChanges.length, "stop")} · ${formatCountLabel(routeChanges.length, "route")}`,
+      tone: itemChanges.length || routeChanges.length ? "neutral" : "ok",
+      detail: itemChanges.length || routeChanges.length
+        ? "Only the listed stop and route changes will be applied."
+        : "No visible schedule changes were produced.",
+    },
+  ];
+
+  return `
+    <div class="preview-explainer">
+      <div class="preview-explainer-header">
+        <div>
+          <div class="diff-section-title">AI preview explanation</div>
+          <strong>${escapeHtml(describePreviewPrimaryIntent(commands, itemChanges, routeChanges))}</strong>
+        </div>
+      </div>
+      <div class="preview-explainer-grid">
+        ${safetyCards.map((card) => `
+          <div class="preview-explainer-card ${escapeHtml(card.tone)}">
+            <span>${escapeHtml(card.label)}</span>
+            <strong>${escapeHtml(card.value)}</strong>
+            <small>${escapeHtml(card.detail)}</small>
+          </div>
+        `).join("")}
+      </div>
+      ${actionLines.length ? `
+        <ul class="preview-explainer-actions">
+          ${actionLines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}
+        </ul>
+      ` : ""}
+    </div>
+  `;
+}
+
+function describePreviewPrimaryIntent(commands, itemChanges, routeChanges) {
+  const firstReason = commands.find((command) => command.reason)?.reason;
+  if (firstReason) {
+    return firstReason;
+  }
+
+  if (itemChanges.length) {
+    return `Review ${formatCountLabel(itemChanges.length, "stop change")}.`;
+  }
+
+  if (routeChanges.length) {
+    return `Review ${formatCountLabel(routeChanges.length, "route change")}.`;
+  }
+
+  return "Review the preview before applying it.";
+}
+
+function buildPreviewActionLines(commands, itemChanges, routeChanges) {
+  const lines = [];
+  commands.forEach((command) => {
+    lines.push(describePreviewCommand(command));
+  });
+
+  if (itemChanges.length) {
+    const added = itemChanges.filter((change) => change.kind === "added").length;
+    const removed = itemChanges.filter((change) => change.kind === "removed").length;
+    const moved = itemChanges.filter((change) => change.kind === "moved").length;
+    const updated = itemChanges.filter((change) => change.kind === "updated").length;
+    [
+      added ? `${formatCountLabel(added, "stop")} will be added.` : "",
+      removed ? `${formatCountLabel(removed, "stop")} will be removed.` : "",
+      moved ? `${formatCountLabel(moved, "stop")} will move to another day.` : "",
+      updated ? `${formatCountLabel(updated, "stop")} will be updated.` : "",
+    ].filter(Boolean).forEach((line) => lines.push(line));
+  }
+
+  if (routeChanges.length) {
+    lines.push(`${formatCountLabel(routeChanges.length, "route")} will be recalculated or retagged.`);
+  }
+
+  return Array.from(new Set(lines.filter(Boolean)));
+}
+
+function describePreviewCommand(command) {
+  const labels = {
+    lock_item: "Lock the selected stop.",
+    unlock_item: "Unlock the selected stop.",
+    move_item: "Adjust a stop time.",
+    reorder_item: "Move a stop earlier or later in the day.",
+    update_item: "Save stop details.",
+    add_day: "Add a trip day.",
+    delete_day: "Remove an empty trip day.",
+    replace_place: "Swap the selected place.",
+    insert_item: "Insert a new stop.",
+    restore_item: "Restore a previously removed stop.",
+    delete_item: "Remove a stop.",
+    set_transport_mode: "Change a route transport mode.",
+    optimize_day: "Optimize the day order.",
+    relax_day: "Add breathing room to the day.",
+    compress_day: "Tighten the day timing.",
+    fill_meal: "Add a meal stop.",
+    regenerate_markdown: "Regenerate itinerary notes.",
+    resolve_conflict: "Try an automatic conflict fix.",
+  };
+
+  return labels[command.action] ?? command.reason ?? `Run ${command.action}.`;
 }
 
 function renderPreviewChangeList(itemChanges, routeChanges) {
@@ -2974,9 +3425,17 @@ function getAdjacentItem(trip, dayDate, itemId, direction) {
   return items[index + direction] ?? null;
 }
 
+function findIncomingRoute(trip, itemId) {
+  if (!trip || !itemId) {
+    return null;
+  }
+
+  return trip.routes.find((route) => route.to_item_id === itemId) ?? null;
+}
+
 function renderConflicts(trip, day, options = {}) {
   const itemIds = new Set((day?.items ?? []).map((item) => item.id));
-  const conflicts = trip.conflicts.filter((conflict) => {
+  const allConflicts = trip.conflicts.filter((conflict) => {
     if (options.conflictIds?.length) {
       return options.conflictIds.includes(conflict.id);
     }
@@ -2985,15 +3444,28 @@ function renderConflicts(trip, day, options = {}) {
     }
     return conflict.item_ids.some((itemId) => itemIds.has(itemId));
   });
+  const conflicts = options.allowIgnore === false
+    ? allConflicts
+    : allConflicts.filter((conflict) => !isConflictIgnored(conflict.id));
+  const ignoredNote = options.allowIgnore === false
+    ? ""
+    : renderIgnoredConflictsNote(allConflicts.length - conflicts.length);
 
   if (conflicts.length === 0) {
-    return `<div class="diff-meta">${escapeHtml(options.emptyText ?? "No current conflicts on this day.")}</div>`;
+    return `
+      <div class="diff-meta">
+        ${escapeHtml(options.emptyText ?? "No current conflicts on this day.")}
+        ${ignoredNote}
+      </div>
+    `;
   }
 
-  return renderConflictSnapshotList(
+  return `
+    ${renderConflictSnapshotList(
     options.title ?? "Conflicts",
     conflicts.map((conflict) => ({
       id: conflict.id,
+      type: conflict.type,
       severity: conflict.severity,
       message: conflict.message,
       resolution_hint: conflict.resolution_hint,
@@ -3004,15 +3476,26 @@ function renderConflicts(trip, day, options = {}) {
     {
       highlightedConflictId: options.highlightedConflictId ?? null,
     }
-  );
+  )}
+    ${ignoredNote}
+  `;
 }
 
 function renderConflictSnapshotList(title, conflicts, options = {}) {
+  const visibleConflicts = conflicts
+    .map(enrichConflictSnapshot)
+    .filter((conflict) => options.allowIgnore === false || !isConflictIgnored(conflict.id))
+    .sort((left, right) => left.grade.rank - right.grade.rank || left.message.localeCompare(right.message));
+
+  if (visibleConflicts.length === 0) {
+    return "";
+  }
+
   return `
     <div class="diff-section">
       <div class="diff-section-title">${escapeHtml(title)}</div>
       <ul class="diff-list conflict-list">
-        ${conflicts
+        ${visibleConflicts
           .map((conflict) => {
             const activeClass = conflict.id === options.highlightedConflictId ? " active" : "";
             const locateButton = options.allowFocus === false ? "" : `
@@ -3027,14 +3510,26 @@ function renderConflictSnapshotList(title, conflicts, options = {}) {
             const repairButton = options.allowRepair === false
               ? ""
               : conflict.repairable
-              ? `<button type="button" class="button button-small" data-conflict-action="repair" data-conflict-id="${escapeHtml(conflict.id)}" data-item-id="${escapeHtml(conflict.item_ids?.[0] ?? "")}" data-day-date="${escapeHtml(conflict.day_date ?? "")}">Repair</button>`
+              ? `<button type="button" class="button button-small" data-conflict-action="repair" data-conflict-id="${escapeHtml(conflict.id)}" data-item-id="${escapeHtml(conflict.item_ids?.[0] ?? "")}" data-day-date="${escapeHtml(conflict.day_date ?? "")}">Fix</button>`
               : "";
+            const ignoreButton = options.allowIgnore === false ? "" : `
+              <button
+                type="button"
+                class="button button-small"
+                data-conflict-action="ignore"
+                data-conflict-id="${escapeHtml(conflict.id)}">
+                Keep as-is
+              </button>
+            `;
             const hint = conflict.resolution_hint ? `<div class="diff-meta">${escapeHtml(conflict.resolution_hint)}</div>` : "";
             return `
-              <li class="conflict-entry${activeClass}${conflict.severity === "error" ? " conflict-error" : ""}">
+              <li class="conflict-entry ${escapeHtml(conflict.grade.level)}${activeClass}${conflict.severity === "error" ? " conflict-error" : ""}">
                 <div class="conflict-row">
-                  <span>${escapeHtml(conflict.message)}</span>
-                  ${(locateButton || repairButton) ? `<div class="conflict-actions">${locateButton}${repairButton}</div>` : ""}
+                  <span class="conflict-message">
+                    <span class="conflict-grade ${escapeHtml(conflict.grade.level)}">${escapeHtml(conflict.grade.label)}</span>
+                    <span>${escapeHtml(conflict.message)}</span>
+                  </span>
+                  ${(locateButton || repairButton || ignoreButton) ? `<div class="conflict-actions">${locateButton}${repairButton}${ignoreButton}</div>` : ""}
                 </div>
                 ${hint}
               </li>
@@ -3044,6 +3539,79 @@ function renderConflictSnapshotList(title, conflicts, options = {}) {
       </ul>
     </div>
   `;
+}
+
+function enrichConflictSnapshot(conflict) {
+  return {
+    ...conflict,
+    grade: classifyConflict(conflict),
+  };
+}
+
+function classifyConflict(conflict) {
+  if (
+    conflict.severity === "error" ||
+    conflict.type === "locked_item_violation" ||
+    conflict.type === "overlap_conflict" ||
+    conflict.type === "travel_time_underestimated"
+  ) {
+    return {
+      level: "must-fix",
+      label: "Must fix",
+      rank: 0,
+    };
+  }
+
+  if (
+    conflict.severity === "warning" ||
+    conflict.type === "opening_hours_conflict" ||
+    conflict.type === "meal_window_missing" ||
+    conflict.type === "pace_limit_exceeded" ||
+    conflict.type === "reservation_time_mismatch"
+  ) {
+    return {
+      level: "review",
+      label: "Review",
+      rank: 1,
+    };
+  }
+
+  return {
+    level: "fyi",
+    label: "FYI",
+    rank: 2,
+  };
+}
+
+function renderIgnoredConflictsNote(count) {
+  if (count <= 0) {
+    return "";
+  }
+
+  return `
+    <span class="conflict-ignored-note">
+      ${escapeHtml(formatCountLabel(count, "conflict"))} kept as-is.
+      <button type="button" class="button button-small" data-conflict-action="clear-ignored">Show kept</button>
+    </span>
+  `;
+}
+
+function isConflictIgnored(conflictId) {
+  return Boolean(conflictId && state.ignoredConflictIds.has(conflictId));
+}
+
+function reconcileIgnoredConflicts(trip) {
+  if (!trip) {
+    state.ignoredConflictIds.clear();
+    return;
+  }
+
+  const activeIds = new Set(trip.conflicts.map((conflict) => conflict.id));
+  Array.from(state.ignoredConflictIds).forEach((conflictId) => {
+    if (!activeIds.has(conflictId)) {
+      state.ignoredConflictIds.delete(conflictId);
+    }
+  });
 }
 
 function isRepairableConflict(conflict) {
@@ -3092,6 +3660,7 @@ function collectConflictSnapshots(trip, conflictIds = []) {
     .filter(Boolean)
     .map((conflict) => ({
       id: conflict.id,
+      type: conflict.type,
       severity: conflict.severity,
       message: conflict.message,
       resolution_hint: conflict.resolution_hint,

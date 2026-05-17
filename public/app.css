@@ -392,14 +392,16 @@ body {
 }
 
 .trip-import-status,
-.trip-import-summary {
+.trip-import-summary,
+.trip-import-review {
   font-size: 13px;
   line-height: 1.5;
   color: var(--muted);
 }
 
 .trip-import-followup,
-.trip-import-itinerary {
+.trip-import-itinerary,
+.trip-import-review {
   display: grid;
   gap: 12px;
   padding: 14px;
@@ -410,6 +412,7 @@ body {
 
 .trip-import-followup-prompt,
 .trip-import-itinerary-meta,
+.trip-import-review-meta,
 .trip-import-day-date,
 .trip-import-item-meta,
 .trip-import-followup-history-title,
@@ -425,6 +428,7 @@ body {
 }
 
 .trip-import-itinerary-header,
+.trip-import-review-header,
 .trip-import-day-header,
 .trip-import-item-meta-row,
 .conflict-actions {
@@ -432,6 +436,110 @@ body {
   justify-content: space-between;
   align-items: start;
   gap: 10px;
+}
+
+.trip-import-review-stats,
+.trip-import-review-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.trip-import-review-stats {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.trip-import-review-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.trip-import-review-stat {
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(211, 200, 183, 0.72);
+  background: rgba(250, 246, 239, 0.72);
+}
+
+.trip-import-review-stat strong {
+  display: block;
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1.1;
+}
+
+.trip-import-review-stat span,
+.trip-import-review-title,
+.trip-import-review-status {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.trip-import-review-title {
+  margin-bottom: 6px;
+  color: var(--muted);
+}
+
+.trip-import-review-status {
+  border-radius: 999px;
+  padding: 5px 8px;
+  border: 1px solid rgba(211, 200, 183, 0.82);
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.trip-import-review-status.confirmed {
+  border-color: rgba(20, 90, 74, 0.28);
+  background: rgba(20, 90, 74, 0.08);
+  color: var(--accent);
+}
+
+.trip-import-review-list,
+.trip-import-review-issues {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.trip-import-review-list li,
+.trip-import-review-issues li {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(211, 200, 183, 0.58);
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.trip-import-review-list li span {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.trip-import-review-list li small,
+.trip-import-review-empty,
+.trip-import-review-confirmed {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.trip-import-review-list li.missing,
+.trip-import-review-issues li {
+  border-color: rgba(164, 42, 42, 0.22);
+  background: rgba(164, 42, 42, 0.06);
+}
+
+.trip-import-review-list li.defaulted {
+  border-color: rgba(199, 135, 32, 0.24);
+  background: rgba(199, 135, 32, 0.07);
+}
+
+.trip-import-review-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .trip-import-days,
@@ -1571,10 +1679,13 @@ body {
 
 .focus-editor {
   min-height: 0;
+  display: grid;
+  gap: 12px;
 }
 
 .focus-card,
-.focus-empty {
+.focus-empty,
+.place-resolution-queue {
   border-radius: 20px;
   padding: 16px;
   background: rgba(255, 255, 255, 0.72);
@@ -1590,6 +1701,82 @@ body {
 .focus-empty {
   display: grid;
   gap: 14px;
+}
+
+.place-resolution-queue {
+  display: grid;
+  gap: 12px;
+  border-color: rgba(45, 108, 223, 0.22);
+  background: rgba(238, 244, 255, 0.7);
+}
+
+.place-resolution-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.place-resolution-header h3 {
+  margin: 4px 0 0;
+  font-size: 18px;
+  line-height: 1.18;
+}
+
+.place-resolution-header span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.place-resolution-list {
+  display: grid;
+  gap: 8px;
+}
+
+.place-resolution-item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(45, 108, 223, 0.2);
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.place-resolution-item.selected {
+  border-color: rgba(45, 108, 223, 0.48);
+  box-shadow: 0 0 0 3px rgba(45, 108, 223, 0.1);
+}
+
+.place-resolution-item span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.place-resolution-item strong,
+.place-resolution-item small {
+  overflow-wrap: anywhere;
+}
+
+.place-resolution-item small {
+  color: var(--muted);
+}
+
+.place-resolution-item em {
+  flex: 0 0 auto;
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 700;
+  color: #245fce;
 }
 
 .focus-empty h3 {
@@ -1723,9 +1910,36 @@ body {
 
 .editor-form input,
 .editor-form select,
+.editor-form textarea,
 .trip-create-form input,
 .chat-input {
   color: var(--ink);
+}
+
+.editor-form textarea {
+  width: 100%;
+  min-height: 76px;
+  resize: vertical;
+  padding: 8px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(211, 200, 183, 0.88);
+  background: rgba(255, 255, 255, 0.86);
+  font: inherit;
+  line-height: 1.45;
+}
+
+.editor-form-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+}
+
+.editor-form-wide {
+  grid-column: 1 / -1;
+}
+
+.editor-form-transport {
+  align-items: end;
 }
 
 .editor-form-search {
@@ -1846,6 +2060,70 @@ body {
   color: var(--muted);
 }
 
+.preview-explainer {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(20, 90, 74, 0.14);
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.preview-explainer-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.preview-explainer-header strong {
+  display: block;
+  margin-top: 3px;
+  line-height: 1.35;
+}
+
+.preview-explainer-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.preview-explainer-card {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(211, 200, 183, 0.68);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.preview-explainer-card span,
+.preview-explainer-card small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.preview-explainer-card strong {
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.preview-explainer-card.ok {
+  border-color: rgba(45, 140, 84, 0.22);
+}
+
+.preview-explainer-card.alert {
+  border-color: rgba(164, 42, 42, 0.22);
+  background: rgba(164, 42, 42, 0.06);
+}
+
+.preview-explainer-actions {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
 .preview-change-card {
   appearance: none;
   width: 100%;
@@ -1942,6 +2220,44 @@ body {
   border: 1px solid rgba(210, 131, 37, 0.16);
 }
 
+.conflict-message {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.conflict-grade {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(31, 45, 42, 0.08);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.conflict-grade.must-fix {
+  background: rgba(164, 42, 42, 0.12);
+  color: var(--danger);
+}
+
+.conflict-grade.review {
+  background: rgba(210, 131, 37, 0.14);
+  color: #7a4310;
+}
+
+.conflict-ignored-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: 8px;
+}
+
 .diff-list {
   margin: 10px 0 0;
   padding-left: 18px;
@@ -2015,8 +2331,11 @@ body {
   }
 
   .trip-import-itinerary-header,
+  .trip-import-review-header,
   .trip-import-day-header,
   .trip-import-item-meta-row,
+  .place-resolution-header,
+  .place-resolution-item,
   .conflict-row {
     flex-direction: column;
   }
@@ -2050,8 +2369,15 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .trip-import-review-stats,
+  .trip-import-review-grid {
+    grid-template-columns: 1fr;
+  }
+
   .trip-import-day-grid,
   .trip-import-item-grid,
+  .editor-form-details,
+  .preview-explainer-grid,
   .preview-change-columns {
     grid-template-columns: 1fr;
   }

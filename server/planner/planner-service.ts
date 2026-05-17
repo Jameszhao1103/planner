@@ -406,6 +406,7 @@ const DIRECT_EXECUTE_ACTIONS = new Set<PlannerCommand["action"]>([
   "unlock_item",
   "move_item",
   "reorder_item",
+  "update_item",
   "delete_item",
   "restore_item",
   "add_day",
@@ -416,7 +417,7 @@ function assertDirectExecuteCommand(command: PlannerCommand): void {
   if (!DIRECT_EXECUTE_ACTIONS.has(command.action)) {
     throw new PlannerError(
       "invalid_command",
-      `Direct execute only supports lock_item, unlock_item, move_item, reorder_item, delete_item, restore_item, add_day, and delete_day. Received ${command.action}.`
+      `Direct execute only supports lock_item, unlock_item, move_item, reorder_item, update_item, delete_item, restore_item, add_day, and delete_day. Received ${command.action}.`
     );
   }
 }
@@ -432,6 +433,7 @@ function buildDirectUndoCommands(
   const seenMoveItems = new Set<string>();
   const seenLockItems = new Set<string>();
   const seenDeletedItems = new Set<string>();
+  const seenUpdatedItems = new Set<string>();
   const seenDays = new Set<string>();
 
   [...commands].reverse().forEach((command) => {
@@ -503,6 +505,19 @@ function buildDirectUndoCommands(
       return;
     }
 
+    if (command.action === "update_item") {
+      if (seenUpdatedItems.has(command.item_id)) {
+        return;
+      }
+
+      const undoCommand = buildUndoUpdateItemCommand(before, beforeItem, afterItem);
+      if (undoCommand) {
+        undoCommands.push(undoCommand);
+      }
+      seenUpdatedItems.add(command.item_id);
+      return;
+    }
+
     if (command.action === "lock_item" || command.action === "unlock_item") {
       if (beforeItem.locked === afterItem.locked || seenLockItems.has(command.item_id)) {
         return;
@@ -566,6 +581,43 @@ function buildUndoMoveCommand(
     reason: `Undo ${sourceAction.replace(/_/g, " ")}`,
     new_start_at: item.start_at,
     new_end_at: item.end_at,
+  };
+}
+
+function buildUndoUpdateItemCommand(
+  itinerary: Itinerary,
+  beforeItem: ItineraryItem,
+  afterItem: ItineraryItem
+): PlannerCommand | null {
+  const payload: Record<string, unknown> = {};
+
+  if (beforeItem.title !== afterItem.title) {
+    payload.title = beforeItem.title;
+  }
+  if (beforeItem.kind !== afterItem.kind) {
+    payload.kind = beforeItem.kind;
+  }
+  if (beforeItem.category !== afterItem.category) {
+    payload.category = beforeItem.category ?? null;
+  }
+  if (beforeItem.notes !== afterItem.notes) {
+    payload.notes = beforeItem.notes ?? null;
+  }
+  if (beforeItem.status !== afterItem.status) {
+    payload.status = beforeItem.status;
+  }
+
+  if (Object.keys(payload).length === 0) {
+    return null;
+  }
+
+  return {
+    command_id: createId("cmd"),
+    action: "update_item",
+    item_id: beforeItem.id,
+    day_date: findItemDayDate(itinerary, beforeItem.id),
+    reason: "Undo item update",
+    payload,
   };
 }
 
