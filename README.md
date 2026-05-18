@@ -133,6 +133,7 @@ http://localhost:3000
 ```bash
 npm test
 npm run check:js
+npm run test:e2e
 ```
 
 ## Runtime Modes
